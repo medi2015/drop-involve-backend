@@ -47,7 +47,7 @@ app.post('/generate-upload-url', async (req, res) => {
       Bucket: "get-involve",
       Key: objectKey,
       ContentType: contentType,
-      ContentDisposition: `attachment; filename="${fileName}"`
+      ContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"`
     });
 
     const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
