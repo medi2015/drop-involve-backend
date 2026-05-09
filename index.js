@@ -95,12 +95,59 @@ app.listen(PORT, () => {
 });
 const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
+// Temporarily store verification codes in memory
+const verificationCodes = new Map();
 
 // New endpoint for sending emails
+app.post('/request-code', async (req, res) => {
+  const { emailFrom } = req.body;
+
+  // 1. Domain Lock: Reject non-involve emails immediately
+  if (!emailFrom.toLowerCase().endsWith('@involve.no')) {
+    return res.status(403).json({ error: 'Kun @involve.no-adresser kan sende filer.' });
+  }
+
+  // 2. Generate a 6-digit code
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  verificationCodes.set(emailFrom, code);
+
+  // 3. Send the code to the sender
+  try {
+    await resend.emails.send({
+      from: 'Drop Involve <filer@involve.no>',
+      to: [emailFrom],
+      subject: 'Din verifiseringskode for Drop Involve',
+      html: `
+        <div style="font-family: sans-serif; padding: 20px;">
+          <h2>Din verifiseringskode</h2>
+          <p>Bruk koden under for å bekrefte overføringen din:</p>
+          <h1 style="letter-spacing: 5px; color: #000; background: #f4fe8b; padding: 10px; display: inline-block; border-radius: 8px;">${code}</h1>
+        </div>
+      `
+    });
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Kunne ikke sende kode.' });
+  }
+});
 app.post('/send-email', async (req, res) => {
-  const { emailTo, emailFrom, message, downloadUrl, fileName } = req.body;
+  const { emailTo, emailFrom, message, downloadUrl, fileName, otp } = req.body;
+
+  // --- NEW SECURITY CHECK ---
+  if (verificationCodes.get(emailFrom) !== otp) {
+    return res.status(401).json({ error: 'Ugyldig eller utløpt verifiseringskode.' });
+  }
+  // --------------------------
 
   try {
+    // ... your existing resend.emails.send() code here ...
+
+    // Clear the code after successful use so it can't be reused
+    verificationCodes.delete(emailFrom);
+
+    res.status(200).json(data);
+    // ... rest of the endpoint
     const data = await resend.emails.send({
       // IMPORTANT: This 'from' must be an email on your verified domain
       from: 'Drop Involve <filer@involve.no>',
@@ -108,13 +155,26 @@ app.post('/send-email', async (req, res) => {
       reply_to: emailFrom, // This makes it look like it's "from" the user
       subject: `Fil delt med deg: ${fileName}`,
       html: `
-        <div style="font-family: sans-serif; line-height: 1.5;">
-          <h2>Du har mottatt en fil</h2>
-          <p><strong>Fra:</strong> ${emailFrom}</p>
-          <p><strong>Melding:</strong> ${message || 'Ingen melding vedlagt.'}</p>
-          <hr />
-          <p><a href="${downloadUrl}" style="background: #f4fe8b; color: black; padding: 10px 20px; border-radius: 5px; text-decoration: none; font-weight: bold;">Last ned filen her</a></p>
-          <p style="font-size: 12px; color: #666;">Filen er tilgjengelig via Drop Involve.</p>
+        <div style="font-family: system-ui, -apple-system, sans-serif; background-color: #111; padding: 40px 20px; color: #fff;">
+          <div style="max-width: 600px; margin: 0 auto; background-color: #0a0a0a; border: 1px solid #333; border-radius: 16px; overflow: hidden;">
+            <div style="padding: 40px; text-align: center;">
+              
+              <h1 style="color: #fff; font-size: 28px; margin-top: 0; margin-bottom: 8px; letter-spacing: -1px;">Drop Involve</h1>
+              <p style="color: #888; font-size: 14px; margin-top: 0; margin-bottom: 32px;">Sikre, raske og pålitelige filoverføringer</p>
+              
+              <div style="background-color: #1a1a1a; border-radius: 12px; padding: 24px; text-align: left; margin-bottom: 40px; border: 1px solid #222;">
+                <p style="margin: 0 0 12px 0; color: #ccc;"><strong style="color: #fff;">Fra:</strong> ${emailFrom}</p>
+                <p style="margin: 0; color: #ccc; line-height: 1.6;"><strong style="color: #fff;">Melding:</strong><br/>${message || 'Ingen melding vedlagt.'}</p>
+              </div>
+
+              <!-- Big Button -->
+              <a href="${downloadUrl}" style="display: inline-block; background-color: #d9f949; color: #000; padding: 18px 40px; border-radius: 50px; text-decoration: none; font-weight: bold; font-size: 18px;">
+                Last ned filen her
+              </a>
+              
+              <p style="color: #555; font-size: 12px; margin-top: 40px; margin-bottom: 0;">Filen slettes automatisk etter 24 timer.</p>
+            </div>
+          </div>
         </div>
       `,
     });
