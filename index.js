@@ -93,3 +93,35 @@ app.get('/generate-download-url', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+// New endpoint for sending emails
+app.post('/send-email', async (req, res) => {
+  const { emailTo, emailFrom, message, downloadUrl, fileName } = req.body;
+
+  try {
+    const data = await resend.emails.send({
+      // IMPORTANT: This 'from' must be an email on your verified domain
+      from: 'Drop Involve <filer@involve.no>',
+      to: [emailTo],
+      reply_to: emailFrom, // This makes it look like it's "from" the user
+      subject: `Fil delt med deg: ${fileName}`,
+      html: `
+        <div style="font-family: sans-serif; line-height: 1.5;">
+          <h2>Du har mottatt en fil</h2>
+          <p><strong>Fra:</strong> ${emailFrom}</p>
+          <p><strong>Melding:</strong> ${message || 'Ingen melding vedlagt.'}</p>
+          <hr />
+          <p><a href="${downloadUrl}" style="background: #f4fe8b; color: black; padding: 10px 20px; border-radius: 5px; text-decoration: none; font-weight: bold;">Last ned filen her</a></p>
+          <p style="font-size: 12px; color: #666;">Filen er tilgjengelig via Drop Involve.</p>
+        </div>
+      `,
+    });
+
+    res.status(200).json(data);
+  } catch (error) {
+    console.error('Email error:', error);
+    res.status(500).json({ error: 'Kunne ikke sende e-post' });
+  }
+});
