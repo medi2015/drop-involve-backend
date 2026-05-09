@@ -25,14 +25,13 @@ const s3Client = new S3Client({
 
 /**
  * Generate a Presigned URL for uploading a file (PUT)
- * Expects { fileName, fileType } in query or body
  */
 app.post('/generate-upload-url', async (req, res) => {
   try {
-    const { fileName, fileType } = req.body;
+    const { fileName, contentType } = req.body;
 
-    if (!fileName || !fileType) {
-      return res.status(400).json({ error: 'fileName and fileType are required' });
+    if (!fileName || !contentType) {
+      return res.status(400).json({ error: 'fileName and contentType are required' });
     }
 
     // Create a unique key for the object
@@ -40,16 +39,16 @@ app.post('/generate-upload-url', async (req, res) => {
     const objectKey = `${nanoid()}.${fileExtension}`;
 
     const command = new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,
-      Key: objectKey,
-      ContentType: fileType,
+      Bucket: "get-involve",
+      Key: objectKey, // FIXED: Using the objectKey generated above
+      ContentType: contentType, // FIXED: Matching the frontend data
+      ContentDisposition: `attachment; filename="${fileName}"`
     });
 
-    // Presigned URL valid for 1 hour (3600 seconds)
-    const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
 
     res.json({
-      uploadUrl: url,
+      uploadUrl: uploadUrl, // FIXED: Changed from 'url'
       objectKey: objectKey,
     });
   } catch (error) {
