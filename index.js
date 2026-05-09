@@ -148,7 +148,7 @@ app.post('/send-email', async (req, res) => {
           <div style="max-width: 600px; margin: 0 auto; background-color: #0a0a0a; border: 1px solid #333; border-radius: 16px; overflow: hidden;">
             <div style="padding: 40px; text-align: center;">
               
-              <h1 style="color: #fff; font-size: 28px; margin-top: 0; margin-bottom: 8px; letter-spacing: -1px;">Drop Involve</h1>
+              <h1 style="color: #fff; font-size: 28px; margin-top: 0; margin-bottom: 8px; letter-spacing: -1px;">Drop.Involve.no</h1>
               <p style="color: #888; font-size: 14px; margin-top: 0; margin-bottom: 32px;">Sikre, raske og pålitelige filoverføringer</p>
               
               <div style="background-color: #1a1a1a; border-radius: 12px; padding: 24px; text-align: left; margin-bottom: 40px; border: 1px solid #222;">
@@ -160,7 +160,7 @@ app.post('/send-email', async (req, res) => {
                 Last ned filen her
               </a>
               
-              <p style="color: #555; font-size: 12px; margin-top: 40px; margin-bottom: 0;">Filen slettes automatisk etter 24 timer.</p>
+              <p style="color: #555; font-size: 12px; margin-top: 40px; margin-bottom: 0;">Filen slettes automatisk etter 7 dager</p>
             </div>
           </div>
         </div>
