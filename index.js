@@ -131,7 +131,8 @@ app.post('/request-code', async (req, res) => {
  */
 app.post('/send-email', async (req, res) => {
   const { emailTo, emailFrom, message, downloadUrl, fileName, otp } = req.body;
-
+  // --- ADD THIS LINE ---
+  const recipientList = emailTo.split(',').map(email => email.trim()).filter(email => email !== '');
   // Verify the OTP code
   if (verificationCodes.get(emailFrom) !== otp) {
     return res.status(401).json({ error: 'Ugyldig eller utløpt verifiseringskode.' });
@@ -140,7 +141,7 @@ app.post('/send-email', async (req, res) => {
   try {
     const data = await resend.emails.send({
       from: 'Drop Involve <filer@involve.no>',
-      to: [emailTo],
+      to: recipientList,
       reply_to: emailFrom,
       subject: `Fil delt med deg: ${fileName}`,
       html: `
