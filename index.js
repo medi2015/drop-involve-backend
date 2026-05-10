@@ -125,7 +125,16 @@ app.post('/request-code', async (req, res) => {
     res.status(500).json({ error: 'Kunne ikke sende kode.' });
   }
 });
-
+/**
+ * Verify OTP Code before upload
+ */
+app.post('/verify-code', (req, res) => {
+  const { emailFrom, otp } = req.body;
+  if (verificationCodes.get(emailFrom) === otp) {
+    return res.status(200).json({ success: true });
+  }
+  return res.status(401).json({ error: 'Ugyldig eller feil kode.' });
+});
 /**
  * Send the final email with the download link
  */
