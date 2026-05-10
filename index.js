@@ -140,6 +140,9 @@ app.post('/verify-code', (req, res) => {
  */
 app.post('/send-email', async (req, res) => {
   const { emailTo, emailFrom, message, downloadUrl, fileName, otp } = req.body;
+  // --- ADD THIS NEW TRACKING LINK ---
+  const trackingLink = `https://drop-involve-backend.onrender.com/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}`;
+  // ----------------------------------
   // Verify the OTP code
   if (verificationCodes.get(emailFrom) !== otp) {
     return res.status(401).json({ error: 'Ugyldig eller utløpt verifiseringskode.' });
@@ -171,7 +174,7 @@ app.post('/send-email', async (req, res) => {
                 <p style="margin: 0; color: #ccc; line-height: 1.6;"><strong style="color: #fff;">Melding:</strong><br/>${message || 'Ingen melding vedlagt.'}</p>
               </div>
 
-              <a href="${downloadUrl}" style="display: inline-block; background-color: #d9f949; color: #000; padding: 18px 40px; border-radius: 50px; text-decoration: none; font-weight: bold; font-size: 18px;">
+              <a href="${trackingLink}" style="display: inline-block; background-color: #d9f949; color: #000; padding: 18px 40px; border-radius: 50px; text-decoration: none; font-weight: bold; font-size: 18px;">
                 Last ned filen her
               </a>
               
@@ -189,6 +192,40 @@ app.post('/send-email', async (req, res) => {
   } catch (error) {
     console.error('Email error:', error);
     res.status(500).json({ error: 'Kunne ikke sende e-post' });
+  }
+});
+
+/**
+ * Track Download & Redirect
+ */
+app.get('/track-download', async (req, res) => {
+  const { fileUrl, senderEmail, fileName } = req.query;
+
+  if (!fileUrl || !senderEmail) {
+    return res.status(400).send("Ugyldig lenke.");
+  }
+
+  // 1. Instantly redirect the user to the actual Cloudflare file so they don't wait
+  res.redirect(fileUrl);
+
+  // 2. Send the receipt email to the sender in the background
+  try {
+    await resend.emails.send({
+      from: 'Drop Involve <filer@involve.no>',
+      to: senderEmail,
+      subject: `Nedlastingsbekreftelse: ${fileName}`,
+      html: `
+        <div style="font-family: sans-serif; padding: 20px; color: #333;">
+          <h2 style="color: #c4d600;">Suksess! 🎉</h2>
+          <p>Mottakeren har akkurat lastet ned filen din:</p>
+          <p><b>${fileName}</b></p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+          <p style="font-size: 12px; color: #888;">Drop Involve - Sikre filoverføringer</p>
+        </div>
+      `
+    });
+  } catch (err) {
+    console.error("Kunne ikke sende kvittering:", err);
   }
 });
 
