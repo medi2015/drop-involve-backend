@@ -131,16 +131,21 @@ app.post('/request-code', async (req, res) => {
  */
 app.post('/send-email', async (req, res) => {
   const { emailTo, emailFrom, message, downloadUrl, fileName, otp } = req.body;
-  // --- ADD THIS LINE ---
-  const recipientList = emailTo.split(',').map(email => email.trim()).filter(email => email !== '');
   // Verify the OTP code
   if (verificationCodes.get(emailFrom) !== otp) {
     return res.status(401).json({ error: 'Ugyldig eller utløpt verifiseringskode.' });
   }
 
+  // UPDATED: Bulletproof splitting for multiple emails (handles spaces, commas, and semicolons)
+  const recipientList = emailTo
+    .split(/[,;\s]+/)
+    .map(email => email.trim())
+    .filter(email => email.includes('@'));
+
   try {
     const data = await resend.emails.send({
-      from: 'Drop Involve <filer@involve.no>',
+      // UPDATED: Dynamically uses the sender's actual involve.no email
+      from: `Drop Involve <${emailFrom}>`,
       to: recipientList,
       reply_to: emailFrom,
       subject: `Fil delt med deg: ${fileName}`,
