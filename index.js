@@ -139,7 +139,7 @@ app.post('/verify-code', (req, res) => {
  * Send the final email with the download link
  */
 app.post('/send-email', async (req, res) => {
-  const { emailTo, emailFrom, message, downloadUrl, fileName, otp } = req.body;
+  const { emailTo, emailFrom, message, downloadUrl, fileName, otp, requireReceipt } = req.body;
   // --- ADD THIS NEW TRACKING LINK ---
   const trackingLink = `https://drop-involve-backend.onrender.com/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}`;
   // ----------------------------------
@@ -155,13 +155,20 @@ app.post('/send-email', async (req, res) => {
     .filter(email => email.includes('@'));
 
   try {
-    const data = await resend.emails.send({
-      // UPDATED: Dynamically uses the sender's actual involve.no email
-      from: `Drop Involve <${emailFrom}>`,
-      to: recipientList,
-      reply_to: emailFrom,
-      subject: `Fil delt med deg: ${fileName}`,
-      html: `
+    // Loop through each recipient to give them a personalized email
+    const emailPromises = recipientList.map(recipientEmail => {
+
+      // Determine which link to give them based on the checkbox
+      const finalLink = requireReceipt
+        ? `https://drop-involve-backend.onrender.com/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}&downloader=${encodeURIComponent(recipientEmail)}`
+        : downloadUrl;
+
+      return resend.emails.send({
+        from: `Drop Involve <${emailFrom}>`,
+        to: recipientEmail, // Sends individually to this specific person
+        reply_to: emailFrom,
+        subject: `Fil delt med deg: ${fileName}`,
+        html: `
         <div style="font-family: system-ui, -apple-system, sans-serif; background-color: #111; padding: 40px 20px; color: #fff;">
           <div style="max-width: 600px; margin: 0 auto; background-color: #0a0a0a; border: 1px solid #333; border-radius: 16px; overflow: hidden;">
             <div style="padding: 40px; text-align: center;">
@@ -174,7 +181,7 @@ app.post('/send-email', async (req, res) => {
                 <p style="margin: 0; color: #ccc; line-height: 1.6;"><strong style="color: #fff;">Melding:</strong><br/>${message || 'Ingen melding vedlagt.'}</p>
               </div>
 
-              <a href="${trackingLink}" style="display: inline-block; background-color: #d9f949; color: #000; padding: 18px 40px; border-radius: 50px; text-decoration: none; font-weight: bold; font-size: 18px;">
+              <a href="${finalLink}" style="display: inline-block; background-color: #d9f949; color: #000; padding: 18px 40px; border-radius: 50px; text-decoration: none; font-weight: bold; font-size: 18px;">
                 Last ned filen her
               </a>
               
@@ -182,15 +189,16 @@ app.post('/send-email', async (req, res) => {
             </div>
           </div>
         </div>
-      `,
+        `,
+      });
     });
 
-    // Clear the code after successful use
-    verificationCodes.delete(emailFrom);
+    // Wait for all individual emails to finish sending
+    await Promise.all(emailPromises);
 
-    res.status(200).json(data);
+    res.status(200).json({ success: true });
   } catch (error) {
-    console.error('Email error:', error);
+    console.error("Feil ved sending av e-post:", error);
     res.status(500).json({ error: 'Kunne ikke sende e-post' });
   }
 });
