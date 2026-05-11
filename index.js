@@ -11,7 +11,24 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+const allowedOrigins = [
+  'http://localhost:5173',     // Dev environment
+  'http://tauri.localhost',    // Windows compiled .exe
+  'tauri://localhost',         // Mac compiled .app
+  'https://drop.involve.no'    // Live web version
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+}));
+
 app.use(express.json());
 
 // Cloudflare R2 Client Configuration
