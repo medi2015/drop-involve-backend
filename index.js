@@ -45,7 +45,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Temporarily store verification codes in memory
 const verificationCodes = new Map();
-
+const shortUrls = new Map();
 /**
  * Generate a Presigned URL for uploading a file (PUT)
  */
@@ -80,7 +80,7 @@ app.post('/generate-upload-url', async (req, res) => {
 });
 
 /**
- * Generate a Presigned URL for downloading a file (GET)
+ * Generate a Presigned URL for downloading a file (GET) and shorten it
  */
 app.get('/generate-download-url', async (req, res) => {
   try {
@@ -101,9 +101,20 @@ app.get('/generate-download-url', async (req, res) => {
       expirySeconds = MAX_EXPIRY;
     }
 
-    const url = await getSignedUrl(s3Client, command, { expiresIn: expirySeconds });
+    // 1. Generate the original long S3 URL
+    const longUrl = await getSignedUrl(s3Client, command, { expiresIn: expirySeconds });
 
-    res.json({ downloadUrl: url });
+    // 2. Create a short unique 6-character token
+    const shortId = nanoid(6);
+
+    // 3. Store the link in memory
+    shortUrls.set(shortId, longUrl);
+
+    // 4. Return the shortened domain URL back to the client
+    // Replace the base domain with your active backend or custom domain if needed
+    const shortUrl = `https://drop-involve-backend.onrender.com/s/${shortId}`;
+
+    res.json({ downloadUrl: shortUrl });
   } catch (error) {
     console.error('Error generating download URL:', error);
     res.status(500).json({ error: 'Failed to generate download URL' });
@@ -252,6 +263,21 @@ app.get('/track-download', async (req, res) => {
   } catch (err) {
     console.error("Kunne ikke sende kvittering:", err);
   }
+});
+
+/**
+ * Redirect short URLs to the long presigned S3 URLs
+ */
+app.get('/s/:shortId', (req, res) => {
+  const { shortId } = req.params;
+  const longUrl = shortUrls.get(shortId);
+
+  if (!longUrl) {
+    return res.status(404).send('<h1>Linken er utløpt eller finnes ikke</h1>');
+  }
+
+  // Instantly redirect the user's browser to the actual file location
+  res.redirect(302, longUrl);
 });
 
 // Start the server (always goes at the bottom)
