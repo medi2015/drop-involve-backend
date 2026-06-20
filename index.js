@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { nanoid } = require('nanoid');
 const { Resend } = require('resend');
@@ -45,16 +45,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Temporarily store verification codes in memory
 const verificationCodes = new Map();
-const Database = require('better-sqlite3');
-const db = new Database('shorturls.db');
 
-// Create a table to store the links permanently if it doesn't exist yet
-db.prepare(`
-  CREATE TABLE IF NOT EXISTS urls (
-    shortId TEXT PRIMARY KEY,
-    longUrl TEXT NOT NULL
-  )
-`).run();
 /**
  * Generate a Presigned URL for uploading a file (PUT)
  */
@@ -91,9 +82,6 @@ app.post('/generate-upload-url', async (req, res) => {
 /**
  * Generate a Presigned URL for downloading a file (GET) and shorten it
  */
-/**
- * Generate a Presigned URL for downloading a file (GET) and shorten it
- */
 app.get('/generate-download-url', async (req, res) => {
   try {
     const { objectKey, expiresIn } = req.query;
@@ -119,9 +107,15 @@ app.get('/generate-download-url', async (req, res) => {
     // 2. Create a short unique 6-character token
     const shortId = nanoid(6);
 
-    // 3. Store the link in the SQLite database
-    const insert = db.prepare('INSERT INTO urls (shortId, longUrl) VALUES (?, ?)');
-    insert.run(shortId, longUrl);
+    // 3. Save the link mapping as a small JSON file directly into Cloudflare R2
+    const uploadData = JSON.stringify({ longUrl });
+    const putCommand = new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: `short-urls/${shortId}.json`,
+      Body: uploadData,
+      ContentType: 'application/json'
+    });
+    await s3Client.send(putCommand);
 
     // 4. Return the shortened domain URL back to the client
     const shortUrl = `https://drop-involve-backend.onrender.com/s/${shortId}`;
@@ -279,18 +273,30 @@ app.get('/track-download', async (req, res) => {
 /**
  * Redirect short URLs to the long presigned S3 URLs
  */
-app.get('/s/:shortId', (req, res) => {
+app.get('/s/:shortId', async (req, res) => {
   const { shortId } = req.params;
   
-  // Look up the long URL from the SQLite database
-  const row = db.prepare('SELECT longUrl FROM urls WHERE shortId = ?').get(shortId);
+  try {
+    // 1. Fetch the JSON link mapping file from Cloudflare R2
+    const command = new GetObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: `short-urls/${shortId}.json`,
+    });
 
-  if (!row) {
+    const response = await s3Client.send(command);
+    
+    // 2. Read and parse the stream data into JSON
+    const streamToString = await response.Body.transformToString();
+    const { longUrl } = JSON.parse(streamToString);
+
+    // 3. Instantly redirect the browser to the actual file location
+    return res.redirect(302, longUrl);
+
+  } catch (error) {
+    // If the file isn't found or an error occurs, show the expired page
+    console.error('Error fetching short URL from R2:', error);
     return res.status(404).send('<h1>Linken er utløpt eller finnes ikke</h1>');
   }
-
-  // Instantly redirect the user's browser to the actual file location
-  res.redirect(302, row.longUrl);
 });
 
 // Start the server (always goes at the bottom)
