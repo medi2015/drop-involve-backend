@@ -45,7 +45,16 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Temporarily store verification codes in memory
 const verificationCodes = new Map();
-const shortUrls = new Map();
+const Database = require('better-sqlite3');
+const db = new Database('shorturls.db');
+
+// Create a table to store the links permanently if it doesn't exist yet
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS urls (
+    shortId TEXT PRIMARY KEY,
+    longUrl TEXT NOT NULL
+  )
+`).run();
 /**
  * Generate a Presigned URL for uploading a file (PUT)
  */
@@ -82,6 +91,9 @@ app.post('/generate-upload-url', async (req, res) => {
 /**
  * Generate a Presigned URL for downloading a file (GET) and shorten it
  */
+/**
+ * Generate a Presigned URL for downloading a file (GET) and shorten it
+ */
 app.get('/generate-download-url', async (req, res) => {
   try {
     const { objectKey, expiresIn } = req.query;
@@ -107,11 +119,11 @@ app.get('/generate-download-url', async (req, res) => {
     // 2. Create a short unique 6-character token
     const shortId = nanoid(6);
 
-    // 3. Store the link in memory
-    shortUrls.set(shortId, longUrl);
+    // 3. Store the link in the SQLite database
+    const insert = db.prepare('INSERT INTO urls (shortId, longUrl) VALUES (?, ?)');
+    insert.run(shortId, longUrl);
 
     // 4. Return the shortened domain URL back to the client
-    // Replace the base domain with your active backend or custom domain if needed
     const shortUrl = `https://drop-involve-backend.onrender.com/s/${shortId}`;
 
     res.json({ downloadUrl: shortUrl });
@@ -120,7 +132,6 @@ app.get('/generate-download-url', async (req, res) => {
     res.status(500).json({ error: 'Failed to generate download URL' });
   }
 });
-
 /**
  * Request OTP Code
  */
@@ -270,14 +281,16 @@ app.get('/track-download', async (req, res) => {
  */
 app.get('/s/:shortId', (req, res) => {
   const { shortId } = req.params;
-  const longUrl = shortUrls.get(shortId);
+  
+  // Look up the long URL from the SQLite database
+  const row = db.prepare('SELECT longUrl FROM urls WHERE shortId = ?').get(shortId);
 
-  if (!longUrl) {
+  if (!row) {
     return res.status(404).send('<h1>Linken er utløpt eller finnes ikke</h1>');
   }
 
   // Instantly redirect the user's browser to the actual file location
-  res.redirect(302, longUrl);
+  res.redirect(302, row.longUrl);
 });
 
 // Start the server (always goes at the bottom)
