@@ -118,7 +118,7 @@ app.get('/generate-download-url', async (req, res) => {
     await s3Client.send(putCommand);
 
     // 4. Return the shortened domain URL back to the client
-    const shortUrl = `https://drop-involve-backend.onrender.com/s/${shortId}`;
+    const shortUrl = `http://80.240.25.105:5000/s/${shortId}`;
 
     res.json({ downloadUrl: shortUrl });
   } catch (error) {
@@ -174,7 +174,7 @@ app.post('/verify-code', (req, res) => {
 app.post('/send-email', async (req, res) => {
   const { emailTo, emailFrom, message, downloadUrl, fileName, otp, requireReceipt } = req.body;
   // --- ADD THIS NEW TRACKING LINK ---
-  const trackingLink = `https://drop-involve-backend.onrender.com/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}`;
+  const trackingLink = `http://80.240.25.105:5000/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}`;
   // ----------------------------------
   // Verify the OTP code
   if (verificationCodes.get(emailFrom) !== otp) {
@@ -193,7 +193,7 @@ app.post('/send-email', async (req, res) => {
 
       // Determine which link to give them based on the checkbox
       const finalLink = requireReceipt
-        ? `https://drop-involve-backend.onrender.com/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}&downloader=${encodeURIComponent(recipientEmail)}`
+        ? `http://80.240.25.105:5000/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}&downloader=${encodeURIComponent(recipientEmail)}`
         : downloadUrl;
 
       return resend.emails.send({
