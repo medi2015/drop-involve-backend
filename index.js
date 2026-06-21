@@ -197,7 +197,7 @@ app.post('/send-email', async (req, res) => {
         : downloadUrl;
 
 return resend.emails.send({
-        from: `Drop Involve <${emailFrom}>`,
+        from: `DROP.INVOLVE.NO<${emailFrom}>`,
         to: recipientEmail,
         reply_to: emailFrom,
         subject: `Fil delt med deg: ${fileName}`,
