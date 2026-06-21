@@ -196,29 +196,29 @@ app.post('/send-email', async (req, res) => {
         ? `https://file.involve.no/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}&downloader=${encodeURIComponent(recipientEmail)}`
         : downloadUrl;
 
-      return resend.emails.send({
+return resend.emails.send({
         from: `Drop Involve <${emailFrom}>`,
-        to: recipientEmail, // Sends individually to this specific person
+        to: recipientEmail,
         reply_to: emailFrom,
         subject: `Fil delt med deg: ${fileName}`,
         html: `
-        <div style="font-family: system-ui, -apple-system, sans-serif; background-color: #111; padding: 40px 20px; color: #fff;">
-          <div style="max-width: 600px; margin: 0 auto; background-color: #0a0a0a; border: 1px solid #333; border-radius: 16px; overflow: hidden;">
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f5; padding: 40px 20px; color: #171717;">
+          <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);">
             <div style="padding: 40px; text-align: center;">
-              
-              <h1 style="color: #fff; font-size: 28px; margin-top: 0; margin-bottom: 8px; letter-spacing: -1px;">Drop.Involve.no</h1>
-              <p style="color: #888; font-size: 14px; margin-top: 0; margin-bottom: 32px;">Sikre, raske og pålitelige filoverføringer</p>
-              
-              <div style="background-color: #1a1a1a; border-radius: 12px; padding: 24px; text-align: left; margin-bottom: 40px; border: 1px solid #222;">
-                <p style="margin: 0 0 12px 0; color: #ccc;"><strong style="color: #fff;">Fra:</strong> ${emailFrom}</p>
-                <p style="margin: 0; color: #ccc; line-height: 1.6;"><strong style="color: #fff;">Melding:</strong><br/>${message || 'Ingen melding vedlagt.'}</p>
+              <h1 style="font-size: 24px; font-weight: 600; margin: 0 0 8px 0; color: #171717;">Drop.Involve</h1>
+              <p style="color: #737373; font-size: 14px; margin: 0 0 32px 0;">En fil har blitt delt med deg</p>
+
+              <div style="background-color: #fafafa; border-radius: 8px; padding: 24px; text-align: left; margin-bottom: 32px; border: 1px solid #e5e5e5;">
+                <p style="margin: 0 0 12px 0; font-size: 14px;"><strong style="color: #171717;">Fra:</strong> <span style="color: #525252;">${emailFrom}</span></p>
+                <p style="margin: 0 0 12px 0; font-size: 14px;"><strong style="color: #171717;">Filnavn:</strong> <span style="color: #525252;">${fileName}</span></p>
+                <p style="margin: 0; font-size: 14px; line-height: 1.6;"><strong style="color: #171717;">Melding:</strong><br/><span style="color: #525252;">${message || 'Ingen melding vedlagt.'}</span></p>
               </div>
 
-              <a href="${finalLink}" style="display: inline-block; background-color: #d9f949; color: #000; padding: 18px 40px; border-radius: 50px; text-decoration: none; font-weight: bold; font-size: 18px;">
-                Last ned filen her
+              <a href="${finalLink}" style="display: inline-block; background-color: #171717; color: #ffffff; padding: 14px 32px; border-radius: 6px; text-decoration: none; font-weight: 500; font-size: 16px;">
+                Last ned fil
               </a>
               
-              <p style="color: #555; font-size: 12px; margin-top: 40px; margin-bottom: 0;">Filen slettes automatisk etter 7 dager</p>
+              <p style="color: #a3a3a3; font-size: 12px; margin-top: 32px; margin-bottom: 0;">Filen slettes automatisk etter 7 dager.</p>
             </div>
           </div>
         </div>
