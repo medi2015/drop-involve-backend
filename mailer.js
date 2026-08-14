@@ -37,6 +37,15 @@ if (useSmtp) {
     // forces the upgrade rather than allowing a plaintext session.
     secure: Number(process.env.SMTP_PORT || 587) === 465,
     requireTLS: true,
+    // Force IPv4 unless told otherwise. Google's relay authenticates by IP,
+    // and allowlists are normally IPv4 — but Node will happily connect over
+    // IPv6 when the host has it, arriving from an address Google doesn't
+    // recognise and getting closed at EHLO with a 421.
+    family: Number(process.env.SMTP_FAMILY || 4),
+
+    // Google requires TLS 1.2 or better for relay.
+    tls: { minVersion: 'TLSv1.2' },
+
     // No credentials means the relay is authenticating us by IP address.
     auth: process.env.SMTP_USER
       ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
