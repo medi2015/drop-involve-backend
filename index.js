@@ -5,7 +5,7 @@ const dotenv = require('dotenv');
 const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { nanoid } = require('nanoid');
-const { Resend } = require('resend');
+const { sendMail, verifyTransport, backend } = require('./mailer');
 
 dotenv.config();
 
@@ -55,7 +55,6 @@ const s3Client = new S3Client({
   },
 });
 
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 // --- Verification codes ---------------------------------------------------
 // email -> { code, expiresAt, attempts }
@@ -155,7 +154,7 @@ app.post('/generate-upload-url', requireSession, async (req, res) => {
     const objectKey = `${nanoid()}.${fileExtension}`;
 
     const command = new PutObjectCommand({
-      Bucket: "get-involve",
+      Bucket: process.env.R2_BUCKET_NAME,
       Key: objectKey,
       ContentType: contentType,
       ContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"`
@@ -255,9 +254,9 @@ app.post('/request-code', async (req, res) => {
     // Resend resolves with { data, error } instead of throwing on API errors,
     // so the error field has to be checked explicitly. Without this the server
     // reports success for mail that was never accepted.
-    const { error: sendError } = await resend.emails.send({
-      from: 'Drop Involve <filer@involve.no>',
-      to: [emailFrom],
+    const { error: sendError } = await sendMail({
+      from: process.env.MAIL_FROM || 'Drop Involve <filer@involve.no>',
+      to: email,
       subject: 'Din verifiseringskode for Drop Involve',
       html: `
         <div style="font-family: sans-serif; padding: 20px;">
@@ -362,10 +361,10 @@ app.post('/send-email', requireSession, async (req, res) => {
         ? `https://file.involve.no/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}&downloader=${encodeURIComponent(recipientEmail)}`
         : downloadUrl;
 
-return resend.emails.send({
-        from: `DROP.INVOLVE.NO<${emailFrom}>`,
+return sendMail({
+        from: `DROP.INVOLVE.NO <${emailFrom}>`,
         to: recipientEmail,
-        reply_to: emailFrom,
+        replyTo: emailFrom,
         subject: `Fil delt med deg: ${fileName}`,
         html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f5; padding: 40px 20px; color: #171717;">
@@ -417,8 +416,8 @@ app.get('/track-download', async (req, res) => {
 
   // 2. Send the receipt email to the sender in the background
   try {
-    await resend.emails.send({
-      from: 'Drop Involve <filer@involve.no>',
+    await sendMail({
+      from: process.env.MAIL_FROM || 'Drop Involve <filer@involve.no>',
       to: senderEmail,
       subject: `Nedlastingsbekreftelse: ${fileName}`,
       html: `
@@ -466,6 +465,15 @@ app.get('/s/:shortId', async (req, res) => {
 });
 
 // Start the server (always goes at the bottom)
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
+
+  // Check the mail transport now rather than discovering a bad password the
+  // first time somebody asks for a code.
+  const mail = await verifyTransport();
+  console.log(
+    mail.ok
+      ? `[mail] transport ready (${mail.detail})`
+      : `[mail] TRANSPORT FAILED (${backend}): ${mail.detail}`
+  );
 });
