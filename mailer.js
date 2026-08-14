@@ -37,6 +37,11 @@ if (useSmtp) {
     // forces the upgrade rather than allowing a plaintext session.
     secure: Number(process.env.SMTP_PORT || 587) === 465,
     requireTLS: true,
+    // The name announced in EHLO. Nodemailer defaults to os.hostname(), which
+    // on this VPS is the bare word "vultr" — not a FQDN. Google's relay accepts
+    // that in the plaintext session but rejects it inside TLS with a 421.
+    name: process.env.SMTP_EHLO_NAME || 'file.involve.no',
+
     // Force IPv4 unless told otherwise. Google's relay authenticates by IP,
     // and allowlists are normally IPv4 — but Node will happily connect over
     // IPv6 when the host has it, arriving from an address Google doesn't
