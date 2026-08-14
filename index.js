@@ -32,9 +32,22 @@ app.use(cors({
 app.use(express.json());
 
 // Cloudflare R2 Client Configuration
+//
+// Two deployments use this file and they configure R2 differently:
+//   Render  — sets CLOUDFLARE_ACCOUNT_ID, endpoint is derived from it
+//   the VPS — sets R2_ENDPOINT directly, and needs path-style addressing
+//
+// Preferring R2_ENDPOINT when present keeps both working from one codebase.
+// Without this, whichever host lacks its variable silently builds an endpoint
+// of "https://undefined.r2.cloudflarestorage.com" and every R2 call fails.
+const useExplicitEndpoint = Boolean(process.env.R2_ENDPOINT);
+
 const s3Client = new S3Client({
   region: 'auto',
-  endpoint: `https://${process.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  endpoint: useExplicitEndpoint
+    ? process.env.R2_ENDPOINT
+    : `https://${process.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  ...(useExplicitEndpoint ? { forcePathStyle: true } : {}),
   credentials: {
     accessKeyId: process.env.R2_ACCESS_KEY_ID,
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
