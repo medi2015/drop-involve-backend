@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const crypto = require('crypto');
 const dotenv = require('dotenv');
 const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
@@ -56,13 +57,93 @@ const s3Client = new S3Client({
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Temporarily store verification codes in memory
+// --- Verification codes ---------------------------------------------------
+// email -> { code, expiresAt, attempts }
+// Still in memory, so a restart clears pending codes. Acceptable because codes
+// are short-lived anyway; sessions below are deliberately stateless so an
+// in-flight transfer survives a restart.
 const verificationCodes = new Map();
+const codeRequests = new Map(); // email -> [timestamps]
+
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_MAX_ATTEMPTS = 5;
+const CODE_REQUEST_WINDOW_MS = 60 * 60 * 1000;
+const CODE_REQUEST_MAX = 5;
+const CODE_REQUEST_MIN_GAP_MS = 30 * 1000;
+
+// --- Sessions -------------------------------------------------------------
+// An HMAC-signed token proving the holder completed the email-code check.
+// Stateless on purpose: nothing to store, and it keeps working across restarts
+// and across both hosts running this code.
+const SESSION_TTL_MS = 30 * 60 * 1000;
+
+const SESSION_SECRET = process.env.SESSION_SECRET || (() => {
+  console.warn(
+    '[auth] SESSION_SECRET is not set. Using an ephemeral secret, so tokens ' +
+    'become invalid on restart. Set SESSION_SECRET in the environment.'
+  );
+  return crypto.randomBytes(32).toString('hex');
+})();
+
+// Until this is switched on, unauthenticated requests are allowed through and
+// logged. That gives already-installed clients time to update before the rule
+// starts being enforced.
+const ENFORCE_UPLOAD_AUTH = process.env.ENFORCE_UPLOAD_AUTH === 'true';
+
+const sign = (payload) =>
+  crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+
+function issueSessionToken(email) {
+  const payload = Buffer.from(
+    JSON.stringify({ email, exp: Date.now() + SESSION_TTL_MS })
+  ).toString('base64url');
+  return `${payload}.${sign(payload)}`;
+}
+
+function verifySessionToken(token) {
+  if (typeof token !== 'string' || !token.includes('.')) return null;
+
+  const [payload, signature] = token.split('.');
+  if (!payload || !signature) return null;
+
+  const expected = Buffer.from(sign(payload));
+  const provided = Buffer.from(signature);
+
+  // Length check first: timingSafeEqual throws on mismatched lengths.
+  if (expected.length !== provided.length) return null;
+  if (!crypto.timingSafeEqual(expected, provided)) return null;
+
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    if (!data.exp || data.exp < Date.now()) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function requireSession(req, res, next) {
+  const header = req.get('authorization') || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const session = token ? verifySessionToken(token) : null;
+
+  if (session) {
+    req.session = session;
+    return next();
+  }
+
+  if (!ENFORCE_UPLOAD_AUTH) {
+    console.warn(`[auth] unauthenticated ${req.method} ${req.path} allowed (grace period)`);
+    return next();
+  }
+
+  return res.status(401).json({ error: 'Verifisering kreves. Be om en ny kode.' });
+}
 
 /**
  * Generate a Presigned URL for uploading a file (PUT)
  */
-app.post('/generate-upload-url', async (req, res) => {
+app.post('/generate-upload-url', requireSession, async (req, res) => {
   try {
     const { fileName, contentType } = req.body;
 
@@ -95,7 +176,7 @@ app.post('/generate-upload-url', async (req, res) => {
 /**
  * Generate a Presigned URL for downloading a file (GET) and shorten it
  */
-app.get('/generate-download-url', async (req, res) => {
+app.get('/generate-download-url', requireSession, async (req, res) => {
   try {
     const { objectKey, expiresIn } = req.query;
 
@@ -145,15 +226,36 @@ app.get('/generate-download-url', async (req, res) => {
 app.post('/request-code', async (req, res) => {
   const { emailFrom } = req.body;
 
-  if (!emailFrom.toLowerCase().endsWith('@involve.no')) {
+  if (typeof emailFrom !== 'string' || !emailFrom.toLowerCase().endsWith('@involve.no')) {
     return res.status(403).json({ error: 'Kun @involve.no-adresser kan sende filer.' });
   }
 
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  verificationCodes.set(emailFrom, code);
+  const email = emailFrom.toLowerCase();
+  const now = Date.now();
+
+  // Rate limit. Without this anyone can send unlimited mail to any involve.no
+  // address through our Resend account.
+  const history = (codeRequests.get(email) || []).filter(t => now - t < CODE_REQUEST_WINDOW_MS);
+
+  if (history.length >= CODE_REQUEST_MAX) {
+    return res.status(429).json({ error: 'For mange forespørsler. Prøv igjen om en time.' });
+  }
+  if (history.length && now - history[history.length - 1] < CODE_REQUEST_MIN_GAP_MS) {
+    return res.status(429).json({ error: 'Vent litt før du ber om en ny kode.' });
+  }
+
+  history.push(now);
+  codeRequests.set(email, history);
+
+  // crypto.randomInt, not Math.random — this is a credential.
+  const code = crypto.randomInt(100000, 1000000).toString();
+  verificationCodes.set(email, { code, expiresAt: now + OTP_TTL_MS, attempts: 0 });
 
   try {
-    await resend.emails.send({
+    // Resend resolves with { data, error } instead of throwing on API errors,
+    // so the error field has to be checked explicitly. Without this the server
+    // reports success for mail that was never accepted.
+    const { error: sendError } = await resend.emails.send({
       from: 'Drop Involve <filer@involve.no>',
       to: [emailFrom],
       subject: 'Din verifiseringskode for Drop Involve',
@@ -161,13 +263,21 @@ app.post('/request-code', async (req, res) => {
         <div style="font-family: sans-serif; padding: 20px;">
           <h2>Din verifiseringskode</h2>
           <p>Bruk koden under for å bekrefte overføringen din:</p>
-          <h1 style="letter-spacing: 5px; color: #000; background: #f4fe8b; padding: 10px; display: inline-block; border-radius: 8px;">${code}</h1>
+          <h1 style="letter-spacing: 5px; color: #162022; background: #F5FF8C; padding: 10px; display: inline-block; border-radius: 8px;">${code}</h1>
         </div>
       `
     });
+
+    if (sendError) {
+      console.error('[resend] request-code failed:', sendError);
+      verificationCodes.delete(email);
+      return res.status(502).json({ error: 'Kunne ikke sende kode. Prøv igjen.' });
+    }
+
     res.status(200).json({ success: true });
   } catch (error) {
     console.error(error);
+    verificationCodes.delete(email);
     res.status(500).json({ error: 'Kunne ikke sende kode.' });
   }
 });
@@ -176,22 +286,65 @@ app.post('/request-code', async (req, res) => {
  */
 app.post('/verify-code', (req, res) => {
   const { emailFrom, otp } = req.body;
-  if (verificationCodes.get(emailFrom) === otp) {
-    return res.status(200).json({ success: true });
+
+  if (typeof emailFrom !== 'string' || typeof otp !== 'string') {
+    return res.status(400).json({ error: 'Mangler e-post eller kode.' });
   }
-  return res.status(401).json({ error: 'Ugyldig eller feil kode.' });
+
+  const email = emailFrom.toLowerCase();
+  const entry = verificationCodes.get(email);
+
+  if (!entry || entry.expiresAt < Date.now()) {
+    verificationCodes.delete(email);
+    return res.status(401).json({ error: 'Koden er utløpt. Be om en ny.' });
+  }
+
+  if (entry.attempts >= OTP_MAX_ATTEMPTS) {
+    verificationCodes.delete(email);
+    return res.status(429).json({ error: 'For mange forsøk. Be om en ny kode.' });
+  }
+
+  // Constant-time compare so the response time can't leak the code.
+  const provided = Buffer.from(otp);
+  const expected = Buffer.from(entry.code);
+  const matches =
+    provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
+
+  if (!matches) {
+    entry.attempts += 1;
+    return res.status(401).json({ error: 'Ugyldig eller feil kode.' });
+  }
+
+  // Mark verified rather than deleting outright. Clients released before
+  // session tokens existed re-send the code to /send-email, so the entry has to
+  // survive until it expires. Once ENFORCE_UPLOAD_AUTH is on, only the token
+  // below is accepted and this entry stops mattering.
+  entry.verified = true;
+
+  return res.status(200).json({
+    success: true,
+    token: issueSessionToken(email),
+    expiresIn: SESSION_TTL_MS / 1000,
+  });
 });
 /**
  * Send the final email with the download link
  */
-app.post('/send-email', async (req, res) => {
+app.post('/send-email', requireSession, async (req, res) => {
   const { emailTo, emailFrom, message, downloadUrl, fileName, otp, requireReceipt } = req.body;
   // --- ADD THIS NEW TRACKING LINK ---
   const trackingLink = `https://file.involve.no/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}`;
   // ----------------------------------
-  // Verify the OTP code
-  if (verificationCodes.get(emailFrom) !== otp) {
-    return res.status(401).json({ error: 'Ugyldig eller utløpt verifiseringskode.' });
+
+  // A valid session token is proof enough. Older clients don't have one yet, so
+  // fall back to the verified code they still send.
+  if (!req.session) {
+    const entry = verificationCodes.get(String(emailFrom).toLowerCase());
+    const stillValid = entry && entry.verified && entry.expiresAt > Date.now() && entry.code === otp;
+
+    if (!stillValid) {
+      return res.status(401).json({ error: 'Ugyldig eller utløpt verifiseringskode.' });
+    }
   }
 
   // UPDATED: Bulletproof splitting for multiple emails (handles spaces, commas, and semicolons)
