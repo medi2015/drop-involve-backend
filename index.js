@@ -136,6 +136,63 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_ALLOWED_DOMAIN = process.env.GOOGLE_ALLOWED_DOMAIN || 'involve.no';
 const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
+// The desktop apps use a separate OAuth client. Its secret stays here rather
+// than being compiled into the binaries, so the app never talks to Google's
+// token endpoint — it hands us the authorization code and we do the exchange.
+const GOOGLE_DESKTOP_CLIENT_ID = process.env.GOOGLE_DESKTOP_CLIENT_ID;
+const GOOGLE_DESKTOP_CLIENT_SECRET = process.env.GOOGLE_DESKTOP_CLIENT_SECRET;
+const googleDesktopClient = GOOGLE_DESKTOP_CLIENT_ID
+  ? new OAuth2Client(GOOGLE_DESKTOP_CLIENT_ID)
+  : null;
+
+/**
+ * Shared gate for both sign-in routes: checks the claims Google asserted and
+ * turns them into one of our sessions.
+ *
+ * @returns {{status: number, body: object}}
+ */
+function sessionFromGooglePayload(payload) {
+  if (payload.hd !== GOOGLE_ALLOWED_DOMAIN) {
+    console.warn(`[auth] wrong domain: ${payload.hd || 'none'} (${payload.email})`);
+    return {
+      status: 403,
+      body: { error: `Kun ${GOOGLE_ALLOWED_DOMAIN}-kontoer har tilgang.` },
+    };
+  }
+
+  if (!payload.email_verified) {
+    return {
+      status: 403,
+      body: { error: 'E-postadressen er ikke bekreftet hos Google.' },
+    };
+  }
+
+  const token = issueSessionToken(
+    {
+      sub: payload.sub,           // stable ID; survives email changes
+      email: payload.email,
+      name: payload.name,
+      method: 'google',
+    },
+    GOOGLE_SESSION_TTL_MS
+  );
+
+  console.log(`[auth] signed in: ${payload.email}`);
+
+  return {
+    status: 200,
+    body: {
+      token,
+      expiresIn: GOOGLE_SESSION_TTL_MS / 1000,
+      user: {
+        email: payload.email,
+        name: payload.name,
+        picture: payload.picture,
+      },
+    },
+  };
+}
+
 const SESSION_SECRET = process.env.SESSION_SECRET || (() => {
   console.warn(
     '[auth] SESSION_SECRET is not set. Using an ephemeral secret, so tokens ' +
@@ -445,36 +502,77 @@ app.post('/auth/google', async (req, res) => {
 
   // `hd` is the Workspace domain, asserted by Google. This replaces the old
   // emailFrom.endsWith('@involve.no') check, which trusted the client.
-  if (payload.hd !== GOOGLE_ALLOWED_DOMAIN) {
-    console.warn(`[auth] wrong domain: ${payload.hd || 'none'} (${payload.email})`);
-    return res.status(403).json({ error: `Kun ${GOOGLE_ALLOWED_DOMAIN}-kontoer har tilgang.` });
+  const { status, body } = sessionFromGooglePayload(payload);
+  return res.status(status).json(body);
+});
+
+/**
+ * Sign in from the desktop apps.
+ *
+ * The app runs a temporary loopback server, catches the authorization code
+ * Google redirects to it, and posts the code here. We exchange it — the client
+ * secret lives on this server, not in the shipped binaries — then verify the
+ * resulting ID token exactly as the web route does.
+ */
+app.post('/auth/google/desktop', async (req, res) => {
+  if (!googleDesktopClient || !GOOGLE_DESKTOP_CLIENT_SECRET) {
+    return res.status(503).json({ error: 'Google-innlogging for skrivebord er ikke konfigurert.' });
   }
 
-  if (!payload.email_verified) {
-    return res.status(403).json({ error: 'E-postadressen er ikke bekreftet hos Google.' });
+  const { code, codeVerifier, redirectUri } = req.body || {};
+
+  if (!code || !codeVerifier || !redirectUri) {
+    return res.status(400).json({ error: 'Mangler code, codeVerifier eller redirectUri.' });
   }
 
-  const token = issueSessionToken(
-    {
-      sub: payload.sub,           // stable ID; survives email changes
-      email: payload.email,
-      name: payload.name,
-      method: 'google',
-    },
-    GOOGLE_SESSION_TTL_MS
-  );
+  // Only loopback addresses. Without this the endpoint could be pointed at an
+  // attacker's host as part of a code-interception attempt.
+  if (!/^http:\/\/(127\.0\.0\.1|localhost):\d{1,5}\/?$/.test(redirectUri)) {
+    return res.status(400).json({ error: 'Ugyldig redirectUri.' });
+  }
 
-  console.log(`[auth] signed in: ${payload.email}`);
+  let idToken;
+  try {
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        code_verifier: codeVerifier,
+        client_id: GOOGLE_DESKTOP_CLIENT_ID,
+        client_secret: GOOGLE_DESKTOP_CLIENT_SECRET,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }),
+    });
 
-  return res.status(200).json({
-    token,
-    expiresIn: GOOGLE_SESSION_TTL_MS / 1000,
-    user: {
-      email: payload.email,
-      name: payload.name,
-      picture: payload.picture,
-    },
-  });
+    const tokens = await tokenResponse.json();
+
+    if (!tokenResponse.ok || !tokens.id_token) {
+      console.warn('[auth] desktop code exchange failed:', tokens.error_description || tokens.error);
+      return res.status(401).json({ error: 'Innlogging feilet. Prøv igjen.' });
+    }
+
+    idToken = tokens.id_token;
+  } catch (error) {
+    console.error('[auth] desktop token exchange error:', error.message);
+    return res.status(502).json({ error: 'Fikk ikke kontakt med Google.' });
+  }
+
+  let payload;
+  try {
+    const ticket = await googleDesktopClient.verifyIdToken({
+      idToken,
+      audience: GOOGLE_DESKTOP_CLIENT_ID,
+    });
+    payload = ticket.getPayload();
+  } catch (error) {
+    console.warn('[auth] rejected desktop token:', error.message);
+    return res.status(401).json({ error: 'Ugyldig Google-token.' });
+  }
+
+  const { status, body } = sessionFromGooglePayload(payload);
+  return res.status(status).json(body);
 });
 /**
  * Send the final email with the download link
