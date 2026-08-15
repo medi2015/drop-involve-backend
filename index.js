@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
 const dotenv = require('dotenv');
-const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { nanoid } = require('nanoid');
 const { OAuth2Client } = require('google-auth-library');
@@ -80,6 +80,40 @@ const tooManyAttempts = (shortId) => {
   recent.push(now);
   linkAttempts.set(shortId, recent);
   return false;
+};
+
+// --- Transfer history -----------------------------------------------------
+// One JSON object per user in R2, keyed on the Google `sub` rather than the
+// email address so it survives someone changing name or role.
+//
+// Deliberately records only filename, link and dates — not who it was sent to.
+// Storing recipients would turn this into a record of correspondence, which is
+// personal data with a retention obligation attached.
+const HISTORY_LIMIT = 100;
+
+const historyKey = (sub) => `users/${sub}/history.json`;
+
+const readHistory = async (sub) => {
+  try {
+    const response = await s3Client.send(
+      new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: historyKey(sub) })
+    );
+    const parsed = JSON.parse(await response.Body.transformToString());
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return []; // no history yet
+  }
+};
+
+const writeHistory = async (sub, entries) => {
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: historyKey(sub),
+      Body: JSON.stringify(entries.slice(0, HISTORY_LIMIT)),
+      ContentType: 'application/json',
+    })
+  );
 };
 
 /**
@@ -344,6 +378,23 @@ const generateDownloadUrl = async (req, res) => {
     // 4. Return the shortened domain URL back to the client
     const shortUrl = `https://file.involve.no/s/${shortId}`;
 
+    // 5. Record it against the signed-in user. Done here rather than by the
+    //    client so history can't be forged and doesn't depend on the device.
+    if (req.session?.sub) {
+      const entry = {
+        id: shortId,
+        fileName: fileName || 'Ukjent fil',
+        url: shortUrl,
+        objectKey,
+        hasPassword: Boolean(password),
+        createdAt: Date.now(),
+        expiresAt: Date.now() + expirySeconds * 1000,
+      };
+
+      const entries = [entry, ...(await readHistory(req.session.sub))];
+      await writeHistory(req.session.sub, entries);
+    }
+
     res.json({ downloadUrl: shortUrl, protected: Boolean(password) });
   } catch (error) {
     console.error('Error generating download URL:', error);
@@ -353,6 +404,62 @@ const generateDownloadUrl = async (req, res) => {
 
 app.get('/generate-download-url', requireSession, generateDownloadUrl);
 app.post('/generate-download-url', requireSession, generateDownloadUrl);
+
+/**
+ * The signed-in user's transfers, newest first, across every device.
+ */
+app.get('/history', requireSession, async (req, res) => {
+  if (!req.session.sub) return res.json({ items: [] });
+
+  try {
+    res.json({ items: await readHistory(req.session.sub) });
+  } catch (error) {
+    console.error('Error reading history:', error);
+    res.status(500).json({ error: 'Kunne ikke hente historikk.' });
+  }
+});
+
+/**
+ * Revoke a link.
+ *
+ * Deletes both the short-link mapping and the stored file, so the link stops
+ * working immediately rather than at its expiry — the case being "I sent that
+ * to the wrong person". Not recoverable, which is the point.
+ */
+app.delete('/history/:shortId', requireSession, async (req, res) => {
+  if (!req.session.sub) return res.status(403).json({ error: 'Ingen historikk for denne økten.' });
+
+  const { shortId } = req.params;
+
+  try {
+    const entries = await readHistory(req.session.sub);
+    const entry = entries.find((item) => item.id === shortId);
+
+    if (!entry) {
+      return res.status(404).json({ error: 'Fant ikke overføringen.' });
+    }
+
+    // Best effort on both: a missing object shouldn't block the rest.
+    const remove = async (Key) => {
+      try {
+        await s3Client.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key }));
+      } catch (error) {
+        console.warn(`[revoke] could not delete ${Key}:`, error.name);
+      }
+    };
+
+    await remove(`short-urls/${shortId}.json`);
+    if (entry.objectKey) await remove(entry.objectKey);
+
+    await writeHistory(req.session.sub, entries.filter((item) => item.id !== shortId));
+
+    console.log(`[revoke] ${req.session.email} revoked ${shortId}`);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error revoking link:', error);
+    res.status(500).json({ error: 'Kunne ikke trekke tilbake lenken.' });
+  }
+});
 /**
  * Sign in with Google.
  *
