@@ -106,28 +106,14 @@ const s3Client = new S3Client({
 });
 
 
-// --- Verification codes ---------------------------------------------------
-// email -> { code, expiresAt, attempts }
-// Still in memory, so a restart clears pending codes. Acceptable because codes
-// are short-lived anyway; sessions below are deliberately stateless so an
-// in-flight transfer survives a restart.
-const verificationCodes = new Map();
-const codeRequests = new Map(); // email -> [timestamps]
-
-const OTP_TTL_MS = 10 * 60 * 1000;
-const OTP_MAX_ATTEMPTS = 5;
-const CODE_REQUEST_WINDOW_MS = 60 * 60 * 1000;
-const CODE_REQUEST_MAX = 5;
-const CODE_REQUEST_MIN_GAP_MS = 30 * 1000;
-
 // --- Sessions -------------------------------------------------------------
-// An HMAC-signed token proving the holder completed the email-code check.
-// Stateless on purpose: nothing to store, and it keeps working across restarts
-// and across both hosts running this code.
-// Email-code sessions are short: the code proves someone read one message.
-// Google sessions can be long, because Google enforces its own session policy
-// underneath and an account can be disabled centrally.
-const SESSION_TTL_MS = 30 * 60 * 1000;
+// An HMAC-signed token proving the holder signed in with a Google account on
+// the allowed Workspace domain. Stateless on purpose: nothing to store, and it
+// survives restarts.
+//
+// The trade-off is that it can't be revoked. Disabling someone's Workspace
+// account stops new sign-ins immediately, but a token already issued keeps
+// working until it expires. A sessions table would fix that.
 const GOOGLE_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 // Sign-in is restricted to this Workspace domain, checked against the `hd`
@@ -201,11 +187,6 @@ const SESSION_SECRET = process.env.SESSION_SECRET || (() => {
   return crypto.randomBytes(32).toString('hex');
 })();
 
-// Until this is switched on, unauthenticated requests are allowed through and
-// logged. That gives already-installed clients time to update before the rule
-// starts being enforced.
-const ENFORCE_UPLOAD_AUTH = process.env.ENFORCE_UPLOAD_AUTH === 'true';
-
 const sign = (payload) =>
   crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
 
@@ -213,7 +194,7 @@ const sign = (payload) =>
  * @param {object} claims  e.g. { email, sub, name, method }
  * @param {number} ttlMs   how long the session should last
  */
-function issueSessionToken(claims, ttlMs = SESSION_TTL_MS) {
+function issueSessionToken(claims, ttlMs) {
   const payload = Buffer.from(
     JSON.stringify({ ...claims, exp: Date.now() + ttlMs })
   ).toString('base64url');
@@ -252,12 +233,7 @@ function requireSession(req, res, next) {
     return next();
   }
 
-  if (!ENFORCE_UPLOAD_AUTH) {
-    console.warn(`[auth] unauthenticated ${req.method} ${req.path} allowed (grace period)`);
-    return next();
-  }
-
-  return res.status(401).json({ error: 'Verifisering kreves. Be om en ny kode.' });
+  return res.status(401).json({ error: 'Du må logge inn på nytt.' });
 }
 
 /**
@@ -361,114 +337,6 @@ const generateDownloadUrl = async (req, res) => {
 
 app.get('/generate-download-url', requireSession, generateDownloadUrl);
 app.post('/generate-download-url', requireSession, generateDownloadUrl);
-/**
- * Request OTP Code
- */
-app.post('/request-code', async (req, res) => {
-  const { emailFrom } = req.body;
-
-  if (typeof emailFrom !== 'string' || !emailFrom.toLowerCase().endsWith('@involve.no')) {
-    return res.status(403).json({ error: 'Kun @involve.no-adresser kan sende filer.' });
-  }
-
-  const email = emailFrom.toLowerCase();
-  const now = Date.now();
-
-  // Rate limit. Without this anyone can send unlimited mail to any involve.no
-  // address through our Resend account.
-  const history = (codeRequests.get(email) || []).filter(t => now - t < CODE_REQUEST_WINDOW_MS);
-
-  if (history.length >= CODE_REQUEST_MAX) {
-    return res.status(429).json({ error: 'For mange forespørsler. Prøv igjen om en time.' });
-  }
-  if (history.length && now - history[history.length - 1] < CODE_REQUEST_MIN_GAP_MS) {
-    return res.status(429).json({ error: 'Vent litt før du ber om en ny kode.' });
-  }
-
-  history.push(now);
-  codeRequests.set(email, history);
-
-  // crypto.randomInt, not Math.random — this is a credential.
-  const code = crypto.randomInt(100000, 1000000).toString();
-  verificationCodes.set(email, { code, expiresAt: now + OTP_TTL_MS, attempts: 0 });
-
-  try {
-    // Resend resolves with { data, error } instead of throwing on API errors,
-    // so the error field has to be checked explicitly. Without this the server
-    // reports success for mail that was never accepted.
-    const { error: sendError } = await sendMail({
-      from: process.env.MAIL_FROM || 'Drop Involve <filer@involve.no>',
-      to: email,
-      subject: 'Din verifiseringskode for Drop Involve',
-      html: `
-        <div style="font-family: sans-serif; padding: 20px;">
-          <h2>Din verifiseringskode</h2>
-          <p>Bruk koden under for å bekrefte overføringen din:</p>
-          <h1 style="letter-spacing: 5px; color: #162022; background: #F5FF8C; padding: 10px; display: inline-block; border-radius: 8px;">${code}</h1>
-        </div>
-      `
-    });
-
-    if (sendError) {
-      console.error('[resend] request-code failed:', sendError);
-      verificationCodes.delete(email);
-      return res.status(502).json({ error: 'Kunne ikke sende kode. Prøv igjen.' });
-    }
-
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error(error);
-    verificationCodes.delete(email);
-    res.status(500).json({ error: 'Kunne ikke sende kode.' });
-  }
-});
-/**
- * Verify OTP Code before upload
- */
-app.post('/verify-code', (req, res) => {
-  const { emailFrom, otp } = req.body;
-
-  if (typeof emailFrom !== 'string' || typeof otp !== 'string') {
-    return res.status(400).json({ error: 'Mangler e-post eller kode.' });
-  }
-
-  const email = emailFrom.toLowerCase();
-  const entry = verificationCodes.get(email);
-
-  if (!entry || entry.expiresAt < Date.now()) {
-    verificationCodes.delete(email);
-    return res.status(401).json({ error: 'Koden er utløpt. Be om en ny.' });
-  }
-
-  if (entry.attempts >= OTP_MAX_ATTEMPTS) {
-    verificationCodes.delete(email);
-    return res.status(429).json({ error: 'For mange forsøk. Be om en ny kode.' });
-  }
-
-  // Constant-time compare so the response time can't leak the code.
-  const provided = Buffer.from(otp);
-  const expected = Buffer.from(entry.code);
-  const matches =
-    provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
-
-  if (!matches) {
-    entry.attempts += 1;
-    return res.status(401).json({ error: 'Ugyldig eller feil kode.' });
-  }
-
-  // Mark verified rather than deleting outright. Clients released before
-  // session tokens existed re-send the code to /send-email, so the entry has to
-  // survive until it expires. Once ENFORCE_UPLOAD_AUTH is on, only the token
-  // below is accepted and this entry stops mattering.
-  entry.verified = true;
-
-  return res.status(200).json({
-    success: true,
-    token: issueSessionToken({ email, method: 'code' }),
-    expiresIn: SESSION_TTL_MS / 1000,
-  });
-});
-
 /**
  * Sign in with Google.
  *
@@ -578,21 +446,12 @@ app.post('/auth/google/desktop', async (req, res) => {
  * Send the final email with the download link
  */
 app.post('/send-email', requireSession, async (req, res) => {
-  const { emailTo, emailFrom, message, downloadUrl, fileName, otp, requireReceipt } = req.body;
+  const { emailTo, message, downloadUrl, fileName, requireReceipt } = req.body;
+  // The sender is whoever is signed in — not whatever the client claims.
+  const emailFrom = req.session.email;
   // --- ADD THIS NEW TRACKING LINK ---
   const trackingLink = `https://file.involve.no/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}`;
   // ----------------------------------
-
-  // A valid session token is proof enough. Older clients don't have one yet, so
-  // fall back to the verified code they still send.
-  if (!req.session) {
-    const entry = verificationCodes.get(String(emailFrom).toLowerCase());
-    const stillValid = entry && entry.verified && entry.expiresAt > Date.now() && entry.code === otp;
-
-    if (!stillValid) {
-      return res.status(401).json({ error: 'Ugyldig eller utløpt verifiseringskode.' });
-    }
-  }
 
   // UPDATED: Bulletproof splitting for multiple emails (handles spaces, commas, and semicolons)
   const recipientList = emailTo
