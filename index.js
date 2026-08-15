@@ -7,6 +7,7 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { nanoid } = require('nanoid');
 const { OAuth2Client } = require('google-auth-library');
 const { sendMail, verifyTransport, backend } = require('./mailer');
+const { expiredPage, passwordPage, errorPage } = require('./pages');
 
 dotenv.config();
 
@@ -32,6 +33,53 @@ app.use(cors({
 }));
 
 app.use(express.json());
+// The password prompt served to recipients is a plain HTML form.
+app.use(express.urlencoded({ extended: false }));
+
+// --- Link passwords -------------------------------------------------------
+// Optional per link. Minimum length only: complexity rules mostly produce
+// passwords written on sticky notes.
+const MIN_LINK_PASSWORD_LENGTH = 6;
+const LINK_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+const LINK_ATTEMPT_MAX = 10;
+const linkAttempts = new Map(); // shortId -> [timestamps]
+
+const hashPassword = (password) =>
+  new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16).toString('hex');
+    crypto.scrypt(password, salt, 32, (err, key) =>
+      err ? reject(err) : resolve(`scrypt$${salt}$${key.toString('hex')}`)
+    );
+  });
+
+const verifyPassword = (password, stored) =>
+  new Promise((resolve) => {
+    const [algorithm, salt, expected] = String(stored).split('$');
+    if (algorithm !== 'scrypt' || !salt || !expected) return resolve(false);
+
+    crypto.scrypt(password, salt, 32, (err, key) => {
+      if (err) return resolve(false);
+      const a = Buffer.from(expected, 'hex');
+      resolve(a.length === key.length && crypto.timingSafeEqual(a, key));
+    });
+  });
+
+/** Slows down guessing without locking a link permanently. */
+const tooManyAttempts = (shortId) => {
+  const now = Date.now();
+  const recent = (linkAttempts.get(shortId) || []).filter(
+    (t) => now - t < LINK_ATTEMPT_WINDOW_MS
+  );
+
+  if (recent.length >= LINK_ATTEMPT_MAX) {
+    linkAttempts.set(shortId, recent);
+    return true;
+  }
+
+  recent.push(now);
+  linkAttempts.set(shortId, recent);
+  return false;
+};
 
 // Cloudflare R2 Client Configuration
 //
@@ -188,11 +236,16 @@ app.post('/generate-upload-url', requireSession, async (req, res) => {
 });
 
 /**
- * Generate a Presigned URL for downloading a file (GET) and shorten it
+ * Generate a presigned download URL and shorten it.
+ *
+ * Registered for both GET and POST. POST exists because a link password must
+ * not travel in a query string, where it would land in nginx logs, Cloudflare
+ * logs and browser history. GET stays for desktop builds released before this.
  */
-app.get('/generate-download-url', requireSession, async (req, res) => {
+const generateDownloadUrl = async (req, res) => {
   try {
-    const { objectKey, expiresIn } = req.query;
+    const source = req.method === 'POST' ? req.body : req.query;
+    const { objectKey, expiresIn, password, fileName } = source || {};
 
     if (!objectKey) {
       return res.status(400).json({ error: 'objectKey is required' });
@@ -215,12 +268,25 @@ app.get('/generate-download-url', requireSession, async (req, res) => {
     // 2. Create a short unique 6-character token
     const shortId = nanoid(6);
 
-    // 3. Save the link mapping as a small JSON file directly into Cloudflare R2
-    const uploadData = JSON.stringify({ longUrl });
+    // 3. Save the link mapping as a small JSON file directly into Cloudflare R2.
+    //    Only a hash of the password is stored, never the password itself.
+    const record = { longUrl };
+
+    if (password) {
+      if (String(password).length < MIN_LINK_PASSWORD_LENGTH) {
+        return res.status(400).json({
+          error: `Passordet må ha minst ${MIN_LINK_PASSWORD_LENGTH} tegn.`,
+        });
+      }
+      record.passwordHash = await hashPassword(String(password));
+      // Shown on the prompt so the recipient knows what they're unlocking.
+      if (fileName) record.fileName = String(fileName).slice(0, 200);
+    }
+
     const putCommand = new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME,
       Key: `short-urls/${shortId}.json`,
-      Body: uploadData,
+      Body: JSON.stringify(record),
       ContentType: 'application/json'
     });
     await s3Client.send(putCommand);
@@ -228,12 +294,15 @@ app.get('/generate-download-url', requireSession, async (req, res) => {
     // 4. Return the shortened domain URL back to the client
     const shortUrl = `https://file.involve.no/s/${shortId}`;
 
-    res.json({ downloadUrl: shortUrl });
+    res.json({ downloadUrl: shortUrl, protected: Boolean(password) });
   } catch (error) {
     console.error('Error generating download URL:', error);
     res.status(500).json({ error: 'Failed to generate download URL' });
   }
-});
+};
+
+app.get('/generate-download-url', requireSession, generateDownloadUrl);
+app.post('/generate-download-url', requireSession, generateDownloadUrl);
 /**
  * Request OTP Code
  */
@@ -488,7 +557,12 @@ app.get('/track-download', async (req, res) => {
   const { fileUrl, senderEmail, fileName } = req.query;
 
   if (!fileUrl || !senderEmail) {
-    return res.status(400).send("Ugyldig lenke.");
+    return res.status(400).type('html').send(
+      errorPage({
+        title: 'Ugyldig lenke',
+        message: 'Lenken mangler informasjon. Be avsenderen om å dele den på nytt.',
+      })
+    );
   }
 
   // 1. Instantly redirect the user to the actual Cloudflare file so they don't wait
@@ -518,30 +592,77 @@ app.get('/track-download', async (req, res) => {
 /**
  * Redirect short URLs to the long presigned S3 URLs
  */
+/** Reads a short-link record from R2. Returns null if it's gone. */
+const readShortLink = async (shortId) => {
+  try {
+    const response = await s3Client.send(
+      new GetObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: `short-urls/${shortId}.json`,
+      })
+    );
+    return JSON.parse(await response.Body.transformToString());
+  } catch (error) {
+    console.error(`Short link ${shortId} unavailable:`, error.name);
+    return null;
+  }
+};
+
 app.get('/s/:shortId', async (req, res) => {
   const { shortId } = req.params;
-  
-  try {
-    // 1. Fetch the JSON link mapping file from Cloudflare R2
-    const command = new GetObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,
-      Key: `short-urls/${shortId}.json`,
-    });
+  const record = await readShortLink(shortId);
 
-    const response = await s3Client.send(command);
-    
-    // 2. Read and parse the stream data into JSON
-    const streamToString = await response.Body.transformToString();
-    const { longUrl } = JSON.parse(streamToString);
-
-    // 3. Instantly redirect the browser to the actual file location
-    return res.redirect(302, longUrl);
-
-  } catch (error) {
-    // If the file isn't found or an error occurs, show the expired page
-    console.error('Error fetching short URL from R2:', error);
-    return res.status(404).send('<h1>Linken er utløpt eller finnes ikke</h1>');
+  if (!record) {
+    return res.status(404).type('html').send(expiredPage());
   }
+
+  // Protected links show a prompt instead of redirecting. The presigned URL
+  // is never sent to the browser until the password checks out.
+  if (record.passwordHash) {
+    return res.type('html').send(
+      passwordPage({ shortId, fileName: record.fileName })
+    );
+  }
+
+  return res.redirect(302, record.longUrl);
+});
+
+app.post('/s/:shortId', async (req, res) => {
+  const { shortId } = req.params;
+  const { password } = req.body || {};
+
+  const record = await readShortLink(shortId);
+  if (!record) {
+    return res.status(404).type('html').send(expiredPage());
+  }
+
+  if (!record.passwordHash) {
+    return res.redirect(302, record.longUrl);
+  }
+
+  if (tooManyAttempts(shortId)) {
+    return res.status(429).type('html').send(
+      passwordPage({
+        shortId,
+        fileName: record.fileName,
+        error: 'For mange forsøk. Vent litt og prøv igjen.',
+      })
+    );
+  }
+
+  const ok = password && (await verifyPassword(String(password), record.passwordHash));
+
+  if (!ok) {
+    return res.status(401).type('html').send(
+      passwordPage({
+        shortId,
+        fileName: record.fileName,
+        error: 'Feil passord.',
+      })
+    );
+  }
+
+  return res.redirect(302, record.longUrl);
 });
 
 // Start the server (always goes at the bottom)
