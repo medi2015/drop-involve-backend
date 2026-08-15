@@ -5,6 +5,7 @@ const dotenv = require('dotenv');
 const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { nanoid } = require('nanoid');
+const { OAuth2Client } = require('google-auth-library');
 const { sendMail, verifyTransport, backend } = require('./mailer');
 
 dotenv.config();
@@ -74,7 +75,17 @@ const CODE_REQUEST_MIN_GAP_MS = 30 * 1000;
 // An HMAC-signed token proving the holder completed the email-code check.
 // Stateless on purpose: nothing to store, and it keeps working across restarts
 // and across both hosts running this code.
+// Email-code sessions are short: the code proves someone read one message.
+// Google sessions can be long, because Google enforces its own session policy
+// underneath and an account can be disabled centrally.
 const SESSION_TTL_MS = 30 * 60 * 1000;
+const GOOGLE_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Sign-in is restricted to this Workspace domain, checked against the `hd`
+// claim Google puts in the ID token — not against a string the client sends.
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_ALLOWED_DOMAIN = process.env.GOOGLE_ALLOWED_DOMAIN || 'involve.no';
+const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
 const SESSION_SECRET = process.env.SESSION_SECRET || (() => {
   console.warn(
@@ -92,9 +103,13 @@ const ENFORCE_UPLOAD_AUTH = process.env.ENFORCE_UPLOAD_AUTH === 'true';
 const sign = (payload) =>
   crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
 
-function issueSessionToken(email) {
+/**
+ * @param {object} claims  e.g. { email, sub, name, method }
+ * @param {number} ttlMs   how long the session should last
+ */
+function issueSessionToken(claims, ttlMs = SESSION_TTL_MS) {
   const payload = Buffer.from(
-    JSON.stringify({ email, exp: Date.now() + SESSION_TTL_MS })
+    JSON.stringify({ ...claims, exp: Date.now() + ttlMs })
   ).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
@@ -322,8 +337,73 @@ app.post('/verify-code', (req, res) => {
 
   return res.status(200).json({
     success: true,
-    token: issueSessionToken(email),
+    token: issueSessionToken({ email, method: 'code' }),
     expiresIn: SESSION_TTL_MS / 1000,
+  });
+});
+
+/**
+ * Sign in with Google.
+ *
+ * The browser sends the ID token it got from Google Identity Services. We
+ * verify it here rather than trusting anything the client claims about itself:
+ * google-auth-library checks the signature against Google's published keys and
+ * that the audience is our client ID, then we check the account belongs to the
+ * right Workspace domain.
+ */
+app.post('/auth/google', async (req, res) => {
+  if (!googleClient) {
+    return res.status(503).json({ error: 'Google-innlogging er ikke konfigurert.' });
+  }
+
+  const { credential } = req.body;
+  if (typeof credential !== 'string' || !credential) {
+    return res.status(400).json({ error: 'Mangler Google-token.' });
+  }
+
+  let payload;
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: GOOGLE_CLIENT_ID,
+    });
+    payload = ticket.getPayload();
+  } catch (error) {
+    console.warn('[auth] rejected Google token:', error.message);
+    return res.status(401).json({ error: 'Ugyldig Google-token.' });
+  }
+
+  // `hd` is the Workspace domain, asserted by Google. This replaces the old
+  // emailFrom.endsWith('@involve.no') check, which trusted the client.
+  if (payload.hd !== GOOGLE_ALLOWED_DOMAIN) {
+    console.warn(`[auth] wrong domain: ${payload.hd || 'none'} (${payload.email})`);
+    return res.status(403).json({ error: `Kun ${GOOGLE_ALLOWED_DOMAIN}-kontoer har tilgang.` });
+  }
+
+  if (!payload.email_verified) {
+    return res.status(403).json({ error: 'E-postadressen er ikke bekreftet hos Google.' });
+  }
+
+  const token = issueSessionToken(
+    {
+      sub: payload.sub,           // stable ID; survives email changes
+      email: payload.email,
+      name: payload.name,
+      method: 'google',
+    },
+    GOOGLE_SESSION_TTL_MS
+  );
+
+  console.log(`[auth] signed in: ${payload.email}`);
+
+  return res.status(200).json({
+    token,
+    expiresIn: GOOGLE_SESSION_TTL_MS / 1000,
+    user: {
+      email: payload.email,
+      name: payload.name,
+      picture: payload.picture,
+    },
   });
 });
 /**
