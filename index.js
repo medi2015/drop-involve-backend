@@ -18,7 +18,8 @@ const allowedOrigins = [
   'http://localhost:5173',     // Dev environment
   'http://tauri.localhost',    // Windows compiled .exe
   'tauri://localhost',         // Mac compiled .app
-  'https://drop.involve.no'    // Live web version
+  'https://drop.involve.no',   // Live web version
+  'https://file.involve.no'    // Password prompt posts back to its own origin
 ];
 
 app.use(cors({
@@ -663,6 +664,28 @@ app.post('/s/:shortId', async (req, res) => {
   }
 
   return res.redirect(302, record.longUrl);
+});
+
+// Catch-all error handler. Without this, a rejected origin surfaces as an
+// Express stack trace — unhelpful to the user and more than we want to reveal.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error(`[error] ${req.method} ${req.path}:`, err.message);
+
+  if (res.headersSent) return;
+
+  const wantsHtml = (req.get('accept') || '').includes('text/html');
+
+  if (wantsHtml) {
+    return res.status(500).type('html').send(
+      errorPage({
+        title: 'Noe gikk galt',
+        message: 'Prøv igjen, eller kontakt avsenderen hvis problemet vedvarer.',
+      })
+    );
+  }
+
+  return res.status(500).json({ error: 'Uventet feil.' });
 });
 
 // Start the server (always goes at the bottom)
