@@ -82,6 +82,22 @@ const tooManyAttempts = (shortId) => {
   return false;
 };
 
+/**
+ * Builds a Content-Disposition header that survives non-ASCII filenames.
+ *
+ * `filename="..."` is not percent-decoded by browsers, so encodeURIComponent
+ * alone means "Årsrapport.pdf" downloads as "%C3%85rsrapport.pdf". RFC 6266's
+ * `filename*` carries the real name; the plain `filename` stays as an ASCII
+ * fallback for anything that doesn't understand it.
+ *
+ * The client builds this identically for the PUT — the value is part of the
+ * presigned signature, so the two must match byte for byte.
+ */
+const contentDispositionFor = (fileName) => {
+  const ascii = String(fileName).replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '');
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+};
+
 // Cloudflare R2 Client Configuration
 //
 // Two deployments use this file and they configure R2 differently:
@@ -254,7 +270,7 @@ app.post('/generate-upload-url', requireSession, async (req, res) => {
       Bucket: process.env.R2_BUCKET_NAME,
       Key: objectKey,
       ContentType: contentType,
-      ContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"`
+      ContentDisposition: contentDispositionFor(fileName)
     });
 
     const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
