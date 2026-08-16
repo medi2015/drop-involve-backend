@@ -155,6 +155,58 @@ const writeHistory = async (sub, entries) => {
   );
 };
 
+// --- Contacts -------------------------------------------------------------
+// Addresses this user has sent to before, so they don't retype them. Captured
+// server-side because /send-email already has the recipient list, and stored
+// per account so they follow the person between the website and the app.
+//
+// This is a list of people's email addresses, so it's personal data: capped,
+// and deletable through DELETE /contacts.
+const CONTACTS_LIMIT = 100;
+
+const contactsKey = (sub) => `users/${sub}/contacts.json`;
+
+const readContacts = async (sub) => {
+  try {
+    const response = await s3Client.send(
+      new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: contactsKey(sub) })
+    );
+    const parsed = JSON.parse(await response.Body.transformToString());
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+/** Most recently used first, de-duplicated case-insensitively. */
+const rememberContacts = async (sub, addresses) => {
+  if (!sub || !addresses?.length) return;
+
+  try {
+    const existing = await readContacts(sub);
+    const seen = new Set();
+    const merged = [];
+
+    for (const address of [...addresses, ...existing]) {
+      const key = String(address).toLowerCase().trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(key);
+    }
+
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: contactsKey(sub),
+        Body: JSON.stringify(merged.slice(0, CONTACTS_LIMIT)),
+        ContentType: 'application/json',
+      })
+    );
+  } catch (error) {
+    console.warn('[contacts] could not save:', error.name);
+  }
+};
+
 /**
  * Builds a Content-Disposition header that survives non-ASCII filenames.
  *
@@ -570,6 +622,30 @@ app.post('/multipart/abort', requireSession, async (req, res) => {
   }
 });
 
+/** Addresses this user has sent to before, most recent first. */
+app.get('/contacts', requireSession, async (req, res) => {
+  if (!req.session.sub) return res.json({ items: [] });
+  res.json({ items: await readContacts(req.session.sub) });
+});
+
+/** Clears the saved list — these are other people's addresses. */
+app.delete('/contacts', requireSession, async (req, res) => {
+  if (!req.session.sub) return res.status(403).json({ error: 'Ingen kontakter for denne økten.' });
+
+  try {
+    await s3Client.send(
+      new DeleteObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: contactsKey(req.session.sub),
+      })
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error clearing contacts:', error);
+    res.status(500).json({ error: 'Kunne ikke slette kontaktene.' });
+  }
+});
+
 /**
  * The signed-in user's transfers, newest first, across every device.
  */
@@ -746,6 +822,10 @@ app.post('/send-email', requireSession, async (req, res) => {
     .split(/[,;\s]+/)
     .map(email => email.trim())
     .filter(email => email.includes('@'));
+
+  // Remembered for next time. Not awaited — the sender shouldn't wait on it,
+  // and a failure here mustn't stop the email going out.
+  rememberContacts(req.session?.sub, recipientList);
 
   try {
     // Loop through each recipient to give them a personalized email
