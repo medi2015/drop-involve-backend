@@ -114,6 +114,36 @@ const readHistory = async (sub) => {
   }
 };
 
+/**
+ * Counts a download against the sender's history entry.
+ *
+ * Called after the redirect has already gone out, so a slow R2 round trip
+ * never delays the recipient. Failures are swallowed deliberately — a missed
+ * count is not worth breaking a download over.
+ */
+const recordDownload = async (owner, shortId) => {
+  if (!owner || !shortId) return;
+
+  try {
+    const entries = await readHistory(owner);
+    let changed = false;
+
+    const updated = entries.map((entry) => {
+      if (entry.id !== shortId) return entry;
+      changed = true;
+      return {
+        ...entry,
+        downloads: (entry.downloads || 0) + 1,
+        lastDownloadedAt: Date.now(),
+      };
+    });
+
+    if (changed) await writeHistory(owner, updated);
+  } catch (error) {
+    console.warn(`[downloads] could not record ${shortId}:`, error.name);
+  }
+};
+
 const writeHistory = async (sub, entries) => {
   await s3Client.send(
     new PutObjectCommand({
@@ -363,7 +393,9 @@ const generateDownloadUrl = async (req, res) => {
 
     // 3. Save the link mapping as a small JSON file directly into Cloudflare R2.
     //    Only a hash of the password is stored, never the password itself.
-    const record = { longUrl };
+    // `owner` lets the public /s/ route attribute a download back to the sender
+    // without the recipient being known or authenticated.
+    const record = { longUrl, owner: req.session?.sub || null };
 
     if (password) {
       if (String(password).length < MIN_LINK_PASSWORD_LENGTH) {
@@ -838,7 +870,9 @@ app.get('/s/:shortId', async (req, res) => {
     );
   }
 
-  return res.redirect(302, record.longUrl);
+  res.redirect(302, record.longUrl);
+  // After the redirect, so counting never delays the recipient.
+  recordDownload(record.owner, shortId);
 });
 
 app.post('/s/:shortId', async (req, res) => {
@@ -851,7 +885,9 @@ app.post('/s/:shortId', async (req, res) => {
   }
 
   if (!record.passwordHash) {
-    return res.redirect(302, record.longUrl);
+    res.redirect(302, record.longUrl);
+    recordDownload(record.owner, shortId);
+    return;
   }
 
   if (tooManyAttempts(shortId)) {
@@ -876,7 +912,9 @@ app.post('/s/:shortId', async (req, res) => {
     );
   }
 
-  return res.redirect(302, record.longUrl);
+  res.redirect(302, record.longUrl);
+  // After the redirect, so counting never delays the recipient.
+  recordDownload(record.owner, shortId);
 });
 
 // Catch-all error handler. Without this, a rejected origin surfaces as an
