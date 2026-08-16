@@ -2,7 +2,16 @@ const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
 const dotenv = require('dotenv');
-const { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const {
+  S3Client,
+  GetObjectCommand,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+} = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { nanoid } = require('nanoid');
 const { OAuth2Client } = require('google-auth-library');
@@ -404,6 +413,130 @@ const generateDownloadUrl = async (req, res) => {
 
 app.get('/generate-download-url', requireSession, generateDownloadUrl);
 app.post('/generate-download-url', requireSession, generateDownloadUrl);
+
+// --- Multipart uploads ----------------------------------------------------
+// R2 accepts at most 4.995 GiB in a single PUT, so anything larger has to be
+// split. Beyond raising the ceiling to ~5 TiB, this makes big transfers
+// parallel and lets a failed part be retried instead of restarting the whole
+// upload — and it sidesteps the one-hour presigned URL expiry, which a 20 GB
+// upload can easily outlast.
+
+/** Opens a multipart upload and returns the id the client will refer to. */
+app.post('/multipart/create', requireSession, async (req, res) => {
+  try {
+    const { fileName, contentType } = req.body || {};
+
+    if (!fileName || !contentType) {
+      return res.status(400).json({ error: 'fileName and contentType are required' });
+    }
+
+    const fileExtension = fileName.split('.').pop();
+    const objectKey = `${nanoid()}.${fileExtension}`;
+
+    const { UploadId } = await s3Client.send(
+      new CreateMultipartUploadCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: objectKey,
+        ContentType: contentType,
+        ContentDisposition: contentDispositionFor(fileName),
+      })
+    );
+
+    res.json({ uploadId: UploadId, objectKey });
+  } catch (error) {
+    console.error('Error creating multipart upload:', error);
+    res.status(500).json({ error: 'Kunne ikke starte opplastingen.' });
+  }
+});
+
+/** Presigns a batch of part URLs. Requested in batches so they stay fresh. */
+app.post('/multipart/sign', requireSession, async (req, res) => {
+  try {
+    const { objectKey, uploadId, partNumbers } = req.body || {};
+
+    if (!objectKey || !uploadId || !Array.isArray(partNumbers) || partNumbers.length === 0) {
+      return res.status(400).json({ error: 'objectKey, uploadId and partNumbers are required' });
+    }
+
+    if (partNumbers.length > 100) {
+      return res.status(400).json({ error: 'Be om maks 100 deler om gangen.' });
+    }
+
+    const urls = {};
+    await Promise.all(
+      partNumbers.map(async (partNumber) => {
+        urls[partNumber] = await getSignedUrl(
+          s3Client,
+          new UploadPartCommand({
+            Bucket: process.env.R2_BUCKET_NAME,
+            Key: objectKey,
+            UploadId: uploadId,
+            PartNumber: Number(partNumber),
+          }),
+          { expiresIn: 3600 }
+        );
+      })
+    );
+
+    res.json({ urls });
+  } catch (error) {
+    console.error('Error signing parts:', error);
+    res.status(500).json({ error: 'Kunne ikke signere deler.' });
+  }
+});
+
+/** Assembles the parts into the finished object. */
+app.post('/multipart/complete', requireSession, async (req, res) => {
+  try {
+    const { objectKey, uploadId, parts } = req.body || {};
+
+    if (!objectKey || !uploadId || !Array.isArray(parts) || parts.length === 0) {
+      return res.status(400).json({ error: 'objectKey, uploadId and parts are required' });
+    }
+
+    await s3Client.send(
+      new CompleteMultipartUploadCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: objectKey,
+        UploadId: uploadId,
+        MultipartUpload: {
+          // R2 requires ascending part numbers.
+          Parts: parts
+            .map((part) => ({ PartNumber: Number(part.PartNumber), ETag: part.ETag }))
+            .sort((a, b) => a.PartNumber - b.PartNumber),
+        },
+      })
+    );
+
+    res.json({ ok: true, objectKey });
+  } catch (error) {
+    console.error('Error completing multipart upload:', error);
+    res.status(500).json({ error: 'Kunne ikke fullføre opplastingen.' });
+  }
+});
+
+/** Cancels an upload so the uploaded parts don't linger and accrue storage. */
+app.post('/multipart/abort', requireSession, async (req, res) => {
+  const { objectKey, uploadId } = req.body || {};
+
+  if (!objectKey || !uploadId) {
+    return res.status(400).json({ error: 'objectKey and uploadId are required' });
+  }
+
+  try {
+    await s3Client.send(
+      new AbortMultipartUploadCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: objectKey,
+        UploadId: uploadId,
+      })
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    console.warn('Error aborting multipart upload:', error.name);
+    res.json({ ok: false }); // best effort; the lifecycle rule cleans up anyway
+  }
+});
 
 /**
  * The signed-in user's transfers, newest first, across every device.
