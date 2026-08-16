@@ -622,6 +622,22 @@ app.post('/multipart/abort', requireSession, async (req, res) => {
   }
 });
 
+/**
+ * Liveness check for uptime monitoring.
+ *
+ * Deliberately cheap and unauthenticated: it proves nginx is routing and the
+ * Node process is answering, which covers the failure modes that actually take
+ * this service down. It doesn't touch R2 — a monitor polling every five minutes
+ * would otherwise make ~9,000 storage calls a month to tell us nothing new.
+ */
+app.get('/health', (req, res) => {
+  res.json({
+    ok: true,
+    uptimeSeconds: Math.round(process.uptime()),
+    mail: backend,
+  });
+});
+
 /** Addresses this user has sent to before, most recent first. */
 app.get('/contacts', requireSession, async (req, res) => {
   if (!req.session.sub) return res.json({ items: [] });
