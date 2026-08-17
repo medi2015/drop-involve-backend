@@ -622,6 +622,39 @@ app.post('/multipart/abort', requireSession, async (req, res) => {
   }
 });
 
+// --- Client error reports -------------------------------------------------
+// Crashes in the browser or the desktop app are otherwise invisible: the user
+// sees the ErrorBoundary screen and nobody else ever hears about it. This is
+// unauthenticated on purpose — a crash on the sign-in screen is exactly the
+// kind we most want to know about — so it's capped to stop the logs being
+// flooded by anyone who finds the endpoint.
+const ERROR_REPORT_WINDOW_MS = 60 * 60 * 1000;
+const ERROR_REPORT_MAX = 60;
+let errorReports = [];
+
+app.post('/client-error', (req, res) => {
+  const now = Date.now();
+  errorReports = errorReports.filter((t) => now - t < ERROR_REPORT_WINDOW_MS);
+
+  if (errorReports.length >= ERROR_REPORT_MAX) {
+    return res.status(429).json({ ok: false });
+  }
+  errorReports.push(now);
+
+  const { message, stack, context, appVersion, userAgent } = req.body || {};
+  const clip = (value, max) => String(value ?? '').slice(0, max);
+
+  console.error(
+    `[client] ${clip(message, 300)}\n` +
+    `         where: ${clip(context, 120)} | v${clip(appVersion, 20)}\n` +
+    `         agent: ${clip(userAgent, 200)}\n` +
+    `${clip(stack, 3000)}`
+  );
+
+  // Always 204: a failed error report must never cascade into another error.
+  res.status(204).end();
+});
+
 /**
  * Liveness check for uptime monitoring.
  *
