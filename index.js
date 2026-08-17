@@ -306,6 +306,9 @@ function sessionFromGooglePayload(payload) {
 
   console.log(`[auth] signed in: ${payload.email}`);
 
+  // So an admin can revoke by email later without knowing the subject id.
+  rememberEmailIndex(payload.email, payload.sub);
+
   return {
     status: 200,
     body: {
@@ -328,6 +331,111 @@ const SESSION_SECRET = process.env.SESSION_SECRET || (() => {
   return crypto.randomBytes(32).toString('hex');
 })();
 
+// --- Revocation -----------------------------------------------------------
+// Tokens are stateless, so they can't be withdrawn once issued. Rather than
+// tracking every token, each user has a cut-off timestamp: any token issued
+// before it is refused. One flag revokes every device at once, which is what
+// both "sign out everywhere" and "this person has left" actually need.
+//
+// Cached briefly so this doesn't add an R2 read to every request. The cost is
+// that revocation takes up to a minute to bite — acceptable, given the
+// alternative was thirty days.
+const REVOCATION_CACHE_MS = 60 * 1000;
+// This check sits on every authenticated request, so it must never be the
+// reason one hangs. If R2 is slow the AWS SDK retries with backoff for many
+// seconds; we give up long before that and let the request through.
+const REVOCATION_TIMEOUT_MS = 2000;
+const revocationCache = new Map(); // sub -> { revokedBefore, fetchedAt }
+
+const withTimeout = (promise, ms) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ]);
+
+const securityKey = (sub) => `users/${sub}/security.json`;
+
+const readRevokedBefore = async (sub) => {
+  const cached = revocationCache.get(sub);
+  if (cached && Date.now() - cached.fetchedAt < REVOCATION_CACHE_MS) {
+    return cached.revokedBefore;
+  }
+
+  let revokedBefore = 0;
+  try {
+    const response = await withTimeout(
+      s3Client.send(
+        new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: securityKey(sub) })
+      ),
+      REVOCATION_TIMEOUT_MS
+    );
+    const parsed = JSON.parse(await response.Body.transformToString());
+    revokedBefore = Number(parsed.revokedBefore) || 0;
+  } catch (error) {
+    if (error.message === 'timeout') {
+      // Don't cache a value we didn't actually read, or a brief blip would
+      // blind the check for a full minute.
+      console.warn(`[auth] revocation lookup timed out for ${sub}`);
+      return 0;
+    }
+    revokedBefore = 0; // no revocation record: nothing has been revoked
+  }
+
+  revocationCache.set(sub, { revokedBefore, fetchedAt: Date.now() });
+  return revokedBefore;
+};
+
+const revokeSessionsFor = async (sub) => {
+  const revokedBefore = Date.now();
+
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: securityKey(sub),
+      Body: JSON.stringify({ revokedBefore }),
+      ContentType: 'application/json',
+    })
+  );
+
+  // Take effect immediately on this instance rather than after the cache TTL.
+  revocationCache.set(sub, { revokedBefore, fetchedAt: Date.now() });
+  return revokedBefore;
+};
+
+// Lets an admin revoke by email without knowing the Google subject id.
+const emailIndexKey = (email) => `index/email/${String(email).toLowerCase()}.json`;
+
+const rememberEmailIndex = async (email, sub) => {
+  try {
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: emailIndexKey(email),
+        Body: JSON.stringify({ sub }),
+        ContentType: 'application/json',
+      })
+    );
+  } catch (error) {
+    console.warn('[auth] could not index email:', error.name);
+  }
+};
+
+const subForEmail = async (email) => {
+  try {
+    const response = await s3Client.send(
+      new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: emailIndexKey(email) })
+    );
+    return JSON.parse(await response.Body.transformToString()).sub || null;
+  } catch {
+    return null;
+  }
+};
+
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
+  .split(',')
+  .map((entry) => entry.trim().toLowerCase())
+  .filter(Boolean);
+
 const sign = (payload) =>
   crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
 
@@ -336,8 +444,11 @@ const sign = (payload) =>
  * @param {number} ttlMs   how long the session should last
  */
 function issueSessionToken(claims, ttlMs) {
+  const now = Date.now();
   const payload = Buffer.from(
-    JSON.stringify({ ...claims, exp: Date.now() + ttlMs })
+    // `iat` is what makes revocation possible: it's compared against the
+    // user's cut-off timestamp on every request.
+    JSON.stringify({ ...claims, iat: now, exp: now + ttlMs })
   ).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
@@ -364,17 +475,31 @@ function verifySessionToken(token) {
   }
 }
 
-function requireSession(req, res, next) {
+async function requireSession(req, res, next) {
   const header = req.get('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   const session = token ? verifySessionToken(token) : null;
 
-  if (session) {
-    req.session = session;
-    return next();
+  if (!session) {
+    return res.status(401).json({ error: 'Du må logge inn på nytt.' });
   }
 
-  return res.status(401).json({ error: 'Du må logge inn på nytt.' });
+  // A valid signature isn't enough: the session may have been revoked since.
+  if (session.sub) {
+    try {
+      const revokedBefore = await readRevokedBefore(session.sub);
+      if (revokedBefore && (session.iat || 0) < revokedBefore) {
+        return res.status(401).json({ error: 'Økten er avsluttet. Logg inn på nytt.' });
+      }
+    } catch (error) {
+      // Fail open rather than locking everyone out if R2 is briefly
+      // unreachable — the token is still signed and unexpired.
+      console.warn('[auth] revocation check failed:', error.name);
+    }
+  }
+
+  req.session = session;
+  return next();
 }
 
 /**
@@ -619,6 +744,54 @@ app.post('/multipart/abort', requireSession, async (req, res) => {
   } catch (error) {
     console.warn('Error aborting multipart upload:', error.name);
     res.json({ ok: false }); // best effort; the lifecycle rule cleans up anyway
+  }
+});
+
+/** Signs the user out of every device, including this one. */
+app.post('/auth/revoke-sessions', requireSession, async (req, res) => {
+  if (!req.session.sub) {
+    return res.status(400).json({ error: 'Ingen konto knyttet til økten.' });
+  }
+
+  try {
+    await revokeSessionsFor(req.session.sub);
+    console.log(`[auth] ${req.session.email} signed out everywhere`);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error revoking sessions:', error);
+    res.status(500).json({ error: 'Kunne ikke logge ut alle enheter.' });
+  }
+});
+
+/**
+ * Cuts off someone who has left.
+ *
+ * Disabling a Workspace account stops new sign-ins immediately, but a token
+ * already on their laptop stays valid until it expires. This ends it now.
+ * Restricted to ADMIN_EMAILS — with that unset, the route is disabled.
+ */
+app.post('/admin/revoke-user', requireSession, async (req, res) => {
+  const caller = String(req.session.email || '').toLowerCase();
+
+  if (ADMIN_EMAILS.length === 0 || !ADMIN_EMAILS.includes(caller)) {
+    return res.status(403).json({ error: 'Ikke tilgang.' });
+  }
+
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'email er påkrevd.' });
+
+  const sub = await subForEmail(email);
+  if (!sub) {
+    return res.status(404).json({ error: 'Fant ingen bruker med den adressen.' });
+  }
+
+  try {
+    await revokeSessionsFor(sub);
+    console.log(`[auth] ${caller} revoked all sessions for ${email}`);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error revoking user:', error);
+    res.status(500).json({ error: 'Kunne ikke trekke tilbake øktene.' });
   }
 });
 
