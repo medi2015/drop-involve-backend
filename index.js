@@ -17,6 +17,7 @@ const { nanoid } = require('nanoid');
 const { OAuth2Client } = require('google-auth-library');
 const { sendMail, verifyTransport, backend } = require('./mailer');
 const { expiredPage, passwordPage, errorPage } = require('./pages');
+const { fileSharedEmail, downloadReceiptEmail } = require('./emails');
 
 dotenv.config();
 
@@ -1032,7 +1033,7 @@ app.post('/auth/google/desktop', async (req, res) => {
  * Send the final email with the download link
  */
 app.post('/send-email', requireSession, async (req, res) => {
-  const { emailTo, message, downloadUrl, fileName, requireReceipt } = req.body;
+  const { emailTo, message, downloadUrl, fileName, requireReceipt, expiryDays, hasPassword } = req.body;
   // The sender is whoever is signed in — not whatever the client claims.
   const emailFrom = req.session.email;
   // --- ADD THIS NEW TRACKING LINK ---
@@ -1063,28 +1064,14 @@ return sendMail({
         to: recipientEmail,
         replyTo: emailFrom,
         subject: `Fil delt med deg: ${fileName}`,
-        html: `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f5; padding: 40px 20px; color: #171717;">
-          <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);">
-            <div style="padding: 40px; text-align: center;">
-              <h1 style="font-size: 24px; font-weight: 600; margin: 0 0 8px 0; color: #171717;">Drop.Involve</h1>
-              <p style="color: #737373; font-size: 14px; margin: 0 0 32px 0;">En fil har blitt delt med deg</p>
-
-              <div style="background-color: #fafafa; border-radius: 8px; padding: 24px; text-align: left; margin-bottom: 32px; border: 1px solid #e5e5e5;">
-                <p style="margin: 0 0 12px 0; font-size: 14px;"><strong style="color: #171717;">Fra:</strong> <span style="color: #525252;">${emailFrom}</span></p>
-                <p style="margin: 0 0 12px 0; font-size: 14px;"><strong style="color: #171717;">Filnavn:</strong> <span style="color: #525252;">${fileName}</span></p>
-                <p style="margin: 0; font-size: 14px; line-height: 1.6;"><strong style="color: #171717;">Melding:</strong><br/><span style="color: #525252;">${message || 'Ingen melding vedlagt.'}</span></p>
-              </div>
-
-              <a href="${finalLink}" style="display: inline-block; background-color: #171717; color: #ffffff; padding: 14px 32px; border-radius: 6px; text-decoration: none; font-weight: 500; font-size: 16px;">
-                Last ned fil
-              </a>
-              
-              <p style="color: #a3a3a3; font-size: 12px; margin-top: 32px; margin-bottom: 0;">Filen slettes automatisk etter 7 dager.</p>
-            </div>
-          </div>
-        </div>
-        `,
+        html: fileSharedEmail({
+          emailFrom,
+          fileName,
+          message,
+          link: finalLink,
+          expiryDays: Number(expiryDays) || 7,
+          hasPassword: Boolean(hasPassword),
+        }),
       });
     });
 
@@ -1102,7 +1089,9 @@ return sendMail({
  * Track Download & Redirect
  */
 app.get('/track-download', async (req, res) => {
-  const { fileUrl, senderEmail, fileName } = req.query;
+  // `downloader` is set only when the sender asked for a receipt; the email
+  // template omits the line when it's absent.
+  const { fileUrl, senderEmail, fileName, downloader } = req.query;
 
   if (!fileUrl || !senderEmail) {
     return res.status(400).type('html').send(
@@ -1122,15 +1111,7 @@ app.get('/track-download', async (req, res) => {
       from: process.env.MAIL_FROM || 'Drop Involve <filer@involve.no>',
       to: senderEmail,
       subject: `Nedlastingsbekreftelse: ${fileName}`,
-      html: `
-        <div style="font-family: sans-serif; padding: 20px; color: #333;">
-          <h2 style="color: #c4d600;">Suksess! 🎉</h2>
-          <p>Mottakeren har akkurat lastet ned filen din:</p>
-          <p><b>${fileName}</b></p>
-          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
-          <p style="font-size: 12px; color: #888;">Drop Involve - Sikre filoverføringer</p>
-        </div>
-      `
+      html: downloadReceiptEmail({ fileName, downloader }),
     });
   } catch (err) {
     console.error("Kunne ikke sende kvittering:", err);
