@@ -1060,7 +1060,7 @@ app.post('/send-email', requireSession, async (req, res) => {
         : downloadUrl;
 
 return sendMail({
-        from: `DROP.INVOLVE.NO <${emailFrom}>`,
+        from: `Drop Involve <${emailFrom}>`,
         to: recipientEmail,
         replyTo: emailFrom,
         subject: `Fil delt med deg: ${fileName}`,

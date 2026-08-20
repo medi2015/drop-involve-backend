@@ -47,7 +47,12 @@ const layout = ({ preheader, body }) => `<!doctype html>
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
                 <tr>
                   <td style="background-color:${BRAND}; width:32px; height:32px; border-radius:6px; text-align:center; font-family:${FONT}; font-size:19px; font-weight:bold; color:${INK_DEEP};">I</td>
-                  <td style="padding-left:10px; font-family:${FONT}; font-size:15px; font-weight:bold; color:${SAND}; letter-spacing:0.02em;">drop.involve.no</td>
+                  <!-- An explicit anchor with inline colour. As bare text,
+                       Gmail auto-detects the domain and restyles it as a blue
+                       underlined link, which is unreadable on dark green. -->
+                  <td style="padding-left:10px; font-family:${FONT}; font-size:15px; font-weight:bold; letter-spacing:0.02em;">
+                    <a href="https://drop.involve.no" style="color:${SAND}; text-decoration:none;">drop.involve.no</a>
+                  </td>
                 </tr>
               </table>
 
@@ -90,21 +95,28 @@ const fileSharedEmail = ({ emailFrom, fileName, message, link, expiryDays = 7, h
         </td></tr>
       </table>
 
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
         <tr>
-          <td align="center" bgcolor="${BRAND}" style="border-radius:8px;">
-            <a href="${link}" style="display:inline-block; padding:14px 32px; font-family:${FONT}; font-size:15px; font-weight:bold; color:${INK_DEEP}; text-decoration:none;">Last ned filen</a>
+          <td align="center">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" bgcolor="${BRAND}" style="border-radius:8px;">
+                  <a href="${link}" style="display:inline-block; padding:14px 32px; font-family:${FONT}; font-size:15px; font-weight:bold; color:${INK_DEEP}; text-decoration:none;">Last ned filen</a>
+                </td>
+              </tr>
+            </table>
           </td>
         </tr>
       </table>
 
       ${hasPassword ? `
-      <p style="margin:0 0 12px; font-family:${FONT}; font-size:13px; color:${BRAND};">
-        Filen er passordbeskyttet. Avsenderen sender passordet separat.
+      <p style="margin:0 0 12px; font-family:${FONT}; font-size:13px; color:${BRAND}; text-align:center;">
+        Filen er passordbeskyttet. Passordet sendes ikke på e-post &mdash; ta kontakt
+        med avsenderen for å få det.
       </p>` : ''}
 
-      <p style="margin:0; font-family:${FONT}; font-size:12px; color:${MUTED};">
-        Lenken slutter å virke etter ${Number(expiryDays)} dager, og filen slettes automatisk.
+      <p style="margin:0; font-family:${FONT}; font-size:12px; color:${MUTED}; text-align:center;">
+        Lenken slutter å virke etter ${Number(expiryDays)} ${Number(expiryDays) === 1 ? 'dag' : 'dager'}, og filen slettes automatisk.
       </p>
     `,
   });
