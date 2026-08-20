@@ -11,14 +11,22 @@ const { escapeHtml } = require('./pages');
  * Palette matches the app: Mørk grønn #003F46, Sand #F8F5EC, Gul #F5FF8C.
  */
 
-const INK = '#003F46';
-const CARD = '#00343A';
-const INSET = '#002A2F';
+// These are the app's own surfaces, resolved to solid values.
+//
+// The app layers translucent sand over the dark green — .surface is
+// rgba(248,245,236,0.04), .surface-inset is rgba(22,32,34,0.35) on top of that.
+// Email clients can't be trusted with rgba, so each is pre-composited here.
+// Guessing at them by eye made the email noticeably darker than the app, as if
+// it came from somewhere else.
+const INK = '#003F46';      // page background, same as body
+const CARD = '#0A464D';     // .surface over #003F46
+const INSET = '#0E393E';    // .surface-inset over the card
+const BORDER = '#22585D';   // .surface border over the card
 const SAND = '#F8F5EC';
-const MUTED = '#9FB0AD';
+const MUTED = '#99AFAC';    // text-sand/60 over the card
+const FAINT = '#819E9C';    // text-sand/50 over the card
 const BRAND = '#F5FF8C';
 const INK_DEEP = '#162022';
-const BORDER = '#0C4B53';
 
 const FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif";
 
@@ -62,8 +70,8 @@ const layout = ({ preheader, body }) => `<!doctype html>
           </tr>
         </table>
 
-        <p style="margin:20px 0 0; font-family:${FONT}; font-size:12px; color:${MUTED};">
-          Sendt via <a href="https://involve.no" style="color:${MUTED};">Involve</a>
+        <p style="margin:20px 0 0; font-family:${FONT}; font-size:12px; color:${FAINT};">
+          Sendt via <a href="https://involve.no" style="color:${FAINT};">Involve</a>
         </p>
       </td>
     </tr>
@@ -115,7 +123,7 @@ const fileSharedEmail = ({ emailFrom, fileName, message, link, expiryDays = 7, h
         med avsenderen for å få det.
       </p>` : ''}
 
-      <p style="margin:0; font-family:${FONT}; font-size:12px; color:${MUTED}; text-align:center;">
+      <p style="margin:0; font-family:${FONT}; font-size:12px; color:${FAINT}; text-align:center;">
         Lenken slutter å virke etter ${Number(expiryDays)} ${Number(expiryDays) === 1 ? 'dag' : 'dager'}, og filen slettes automatisk.
       </p>
     `,
