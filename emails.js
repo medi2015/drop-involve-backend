@@ -129,8 +129,8 @@ const fileSharedEmail = ({ emailFrom, fileName, message, link, directLink, expir
       </p>
 
       ${directLink && !hasPassword ? `
-      <p style="margin:0; font-family:${FONT}; font-size:11px; color:${FAINT}; text-align:center;">
-        <a href="${directLink}" style="color:${FAINT};">Hopp over mellomsiden og last ned direkte</a>
+      <p style="margin:0; font-family:${FONT}; font-size:12px; text-align:center;">
+        <a href="${directLink}" style="color:${SAND};">Hopp over mellomsiden og last ned direkte</a>
       </p>` : ''}
     `,
   });
