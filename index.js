@@ -16,7 +16,7 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { nanoid } = require('nanoid');
 const { OAuth2Client } = require('google-auth-library');
 const { sendMail, verifyTransport, backend } = require('./mailer');
-const { expiredPage, passwordPage, errorPage } = require('./pages');
+const { landingPage, expiredPage, errorPage } = require('./pages');
 const { fileSharedEmail, downloadReceiptEmail } = require('./emails');
 
 dotenv.config();
@@ -546,7 +546,7 @@ app.post('/generate-upload-url', requireSession, async (req, res) => {
 const generateDownloadUrl = async (req, res) => {
   try {
     const source = req.method === 'POST' ? req.body : req.query;
-    const { objectKey, expiresIn, password, fileName } = source || {};
+    const { objectKey, expiresIn, password, fileName, fileSize, message } = source || {};
 
     if (!objectKey) {
       return res.status(400).json({ error: 'objectKey is required' });
@@ -573,7 +573,19 @@ const generateDownloadUrl = async (req, res) => {
     //    Only a hash of the password is stored, never the password itself.
     // `owner` lets the public /s/ route attribute a download back to the sender
     // without the recipient being known or authenticated.
-    const record = { longUrl, owner: req.session?.sub || null };
+    // Everything the landing page needs is stored here, because /s/:id is
+    // public and has no session to look anything up from. Links created before
+    // this shipped lack these fields, so the page falls back gracefully.
+    const record = {
+      longUrl,
+      owner: req.session?.sub || null,
+      senderEmail: req.session?.email || null,
+      fileName: fileName ? String(fileName).slice(0, 200) : null,
+      fileSize: Number(fileSize) || null,
+      message: message ? String(message).slice(0, 1000) : null,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + expirySeconds * 1000,
+    };
 
     if (password) {
       if (String(password).length < MIN_LINK_PASSWORD_LENGTH) {
@@ -582,8 +594,6 @@ const generateDownloadUrl = async (req, res) => {
         });
       }
       record.passwordHash = await hashPassword(String(password));
-      // Shown on the prompt so the recipient knows what they're unlocking.
-      if (fileName) record.fileName = String(fileName).slice(0, 200);
     }
 
     const putCommand = new PutObjectCommand({
@@ -1069,6 +1079,9 @@ return sendMail({
           fileName,
           message,
           link: finalLink,
+          // The plain short link when receipts are off; otherwise the tracking
+          // link already points at the landing page.
+          directLink: `${downloadUrl}/d`,
           expiryDays: Number(expiryDays) || 7,
           hasPassword: Boolean(hasPassword),
         }),
@@ -1137,6 +1150,15 @@ const readShortLink = async (shortId) => {
   }
 };
 
+/**
+ * The landing page a recipient sees.
+ *
+ * This used to redirect straight to the file. Showing a branded page first
+ * means they can see what they're getting and who from before committing —
+ * and it's the only surface where external clients see Involve at all.
+ *
+ * Nothing is stored per link: the page is rendered from the record in R2.
+ */
 app.get('/s/:shortId', async (req, res) => {
   const { shortId } = req.params;
   const record = await readShortLink(shortId);
@@ -1145,12 +1167,37 @@ app.get('/s/:shortId', async (req, res) => {
     return res.status(404).type('html').send(expiredPage());
   }
 
-  // Protected links show a prompt instead of redirecting. The presigned URL
-  // is never sent to the browser until the password checks out.
+  // Viewing the page is not downloading — the count happens on /d below, or
+  // when a password is accepted. Otherwise opening the link twice out of
+  // curiosity would read as two downloads.
+  res.type('html').send(
+    landingPage({
+      shortId,
+      fileName: record.fileName,
+      fileSize: record.fileSize,
+      senderEmail: record.senderEmail,
+      message: record.message,
+      expiresAt: record.expiresAt,
+      hasPassword: Boolean(record.passwordHash),
+    })
+  );
+});
+
+/**
+ * The direct download, and what the small link in the email points at.
+ * Deliberately refuses to serve protected links — otherwise the direct link
+ * would be a way around the password.
+ */
+app.get('/s/:shortId/d', async (req, res) => {
+  const { shortId } = req.params;
+  const record = await readShortLink(shortId);
+
+  if (!record) {
+    return res.status(404).type('html').send(expiredPage());
+  }
+
   if (record.passwordHash) {
-    return res.type('html').send(
-      passwordPage({ shortId, fileName: record.fileName })
-    );
+    return res.redirect(302, `/s/${encodeURIComponent(shortId)}`);
   }
 
   res.redirect(302, record.longUrl);
@@ -1158,6 +1205,7 @@ app.get('/s/:shortId', async (req, res) => {
   recordDownload(record.owner, shortId);
 });
 
+/** Password submitted from the landing page. */
 app.post('/s/:shortId', async (req, res) => {
   const { shortId } = req.params;
   const { password } = req.body || {};
@@ -1167,6 +1215,20 @@ app.post('/s/:shortId', async (req, res) => {
     return res.status(404).type('html').send(expiredPage());
   }
 
+  const page = (error, status) =>
+    res.status(status).type('html').send(
+      landingPage({
+        shortId,
+        fileName: record.fileName,
+        fileSize: record.fileSize,
+        senderEmail: record.senderEmail,
+        message: record.message,
+        expiresAt: record.expiresAt,
+        hasPassword: true,
+        error,
+      })
+    );
+
   if (!record.passwordHash) {
     res.redirect(302, record.longUrl);
     recordDownload(record.owner, shortId);
@@ -1174,31 +1236,19 @@ app.post('/s/:shortId', async (req, res) => {
   }
 
   if (tooManyAttempts(shortId)) {
-    return res.status(429).type('html').send(
-      passwordPage({
-        shortId,
-        fileName: record.fileName,
-        error: 'For mange forsøk. Vent litt og prøv igjen.',
-      })
-    );
+    return page('For mange forsøk. Vent litt og prøv igjen.', 429);
   }
 
   const ok = password && (await verifyPassword(String(password), record.passwordHash));
 
   if (!ok) {
-    return res.status(401).type('html').send(
-      passwordPage({
-        shortId,
-        fileName: record.fileName,
-        error: 'Feil passord.',
-      })
-    );
+    return page('Feil passord.', 401);
   }
 
   res.redirect(302, record.longUrl);
-  // After the redirect, so counting never delays the recipient.
   recordDownload(record.owner, shortId);
 });
+
 
 // Catch-all error handler. Without this, a rejected origin surfaces as an
 // Express stack trace — unhelpful to the user and more than we want to reveal.

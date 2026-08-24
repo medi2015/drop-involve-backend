@@ -54,12 +54,13 @@ const layout = ({ preheader, body }) => `<!doctype html>
 
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
                 <tr>
-                  <td style="background-color:${BRAND}; width:32px; height:32px; border-radius:6px; text-align:center; font-family:${FONT}; font-size:19px; font-weight:bold; color:${INK_DEEP};">I</td>
-                  <!-- An explicit anchor with inline colour. As bare text,
-                       Gmail auto-detects the domain and restyles it as a blue
-                       underlined link, which is unreadable on dark green. -->
-                  <td style="padding-left:10px; font-family:${FONT}; font-size:15px; font-weight:bold; letter-spacing:0.02em;">
-                    <a href="https://drop.involve.no" style="color:${SAND}; text-decoration:none;">drop.involve.no</a>
+                  <!-- A PNG, not the SVG: Gmail, Outlook and Apple Mail all
+                       strip SVG. Many clients also block remote images by
+                       default, so the alt text is styled to stand in for it. -->
+                  <td>
+                    <img src="https://drop.involve.no/involve-logo-white.png"
+                         width="118" alt="Involve"
+                         style="display:block; border:0; color:${SAND}; font-family:${FONT}; font-size:17px; font-weight:bold;">
                   </td>
                 </tr>
               </table>
@@ -86,7 +87,7 @@ const detailRow = (label, value) => `
   </tr>`;
 
 /** The main "someone sent you a file" email. */
-const fileSharedEmail = ({ emailFrom, fileName, message, link, expiryDays = 7, hasPassword }) =>
+const fileSharedEmail = ({ emailFrom, fileName, message, link, directLink, expiryDays = 7, hasPassword }) =>
   layout({
     preheader: `${fileName} — klar for nedlasting`,
     body: `
@@ -123,9 +124,14 @@ const fileSharedEmail = ({ emailFrom, fileName, message, link, expiryDays = 7, h
         med avsenderen for å få det.
       </p>` : ''}
 
-      <p style="margin:0; font-family:${FONT}; font-size:12px; color:${FAINT}; text-align:center;">
+      <p style="margin:0 0 14px; font-family:${FONT}; font-size:12px; color:${FAINT}; text-align:center;">
         Lenken slutter å virke etter ${Number(expiryDays)} ${Number(expiryDays) === 1 ? 'dag' : 'dager'}, og filen slettes automatisk.
       </p>
+
+      ${directLink && !hasPassword ? `
+      <p style="margin:0; font-family:${FONT}; font-size:11px; color:${FAINT}; text-align:center;">
+        <a href="${directLink}" style="color:${FAINT};">Hopp over mellomsiden og last ned direkte</a>
+      </p>` : ''}
     `,
   });
 
