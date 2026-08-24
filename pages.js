@@ -27,7 +27,7 @@ const escapeHtml = (value = '') =>
 // Inlined rather than linked: no extra request, no hosting, and it stays sharp
 // on any screen. Tinted to sand rather than pure white, which reads as pasted
 // on against the green.
-const LOGO = `<svg viewBox="0 0 1080 286" width="128" role="img" aria-label="Involve" xmlns="http://www.w3.org/2000/svg" style="height:auto;display:inline-block;">
+const LOGO = `<svg viewBox="0 0 1080 286" width="180" role="img" aria-label="Involve" xmlns="http://www.w3.org/2000/svg" style="height:auto;display:inline-block;">
 <g fill="#F8F5EC">
 <polygon points="440.7 86 392.4 86 345.3 198.2 298.8 86 250.6 86 335.7 279.1 355.6 279.1 440.7 86"/>
 <polygon points="892.5 86 843.6 86 796.6 198.2 750.1 86 701.2 86 786.9 279.1 806.8 279.1 892.5 86"/>
@@ -80,7 +80,7 @@ const layout = ({ title, body, wide }) => `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <meta name="color-scheme" content="dark">
-<title>${escapeHtml(title)} · Drop Involve</title>
+<title>Drop Involve${title ? ` – ${escapeHtml(title)}` : ''}</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   body {
@@ -97,58 +97,58 @@ const layout = ({ title, body, wide }) => `<!doctype html>
   }
   .card {
     width: 100%;
-    max-width: ${wide ? '460px' : '420px'};
+    max-width: ${wide ? '520px' : '440px'};
     background: #0A464D;
     border: 1px solid #22585D;
-    border-radius: 16px;
-    padding: 30px;
+    border-radius: 18px;
+    padding: 40px 38px;
     text-align: center;
   }
   .wordmark { margin-bottom: 6px; }
   .service {
-    margin: 0 0 24px;
-    font-size: 12px;
+    margin: 0 0 30px;
+    font-size: 13px;
     letter-spacing: 0.06em;
     color: #819E9C;
   }
-  h1 { font-size: 19px; margin: 0 0 8px; font-weight: bold; }
-  p  { font-size: 14px; line-height: 1.6; color: #99AFAC; margin: 0 0 8px; }
-  .from { color: #F8F5EC; font-size: 15px; font-weight: 500; margin: 0 0 22px; }
-  .label { font-size: 13px; margin: 0 0 5px; }
+  h1 { font-size: 23px; margin: 0 0 10px; font-weight: bold; }
+  p  { font-size: 15px; line-height: 1.65; color: #B1C1BC; margin: 0 0 8px; }
+  .from { color: #F8F5EC; font-size: 18px; font-weight: 500; margin: 0 0 26px; }
+  .label { font-size: 14px; margin: 0 0 6px; color: #B1C1BC; }
   .panel {
     background: #0E393E;
     border-radius: 10px;
-    padding: 18px;
-    margin-bottom: 22px;
+    padding: 22px;
+    margin-bottom: 26px;
     text-align: left;
   }
   .filename {
     margin: 0 0 3px;
-    font-size: 15px;
+    font-size: 17px;
     font-weight: 500;
     color: #F8F5EC;
     word-break: break-word;
   }
-  .meta { margin: 0; font-size: 12px; color: #819E9C; }
+  .meta { margin: 0; font-size: 13px; color: #99AFAC; }
   .message {
-    margin: 14px 0 0;
-    font-size: 13px;
+    margin: 16px 0 0;
+    font-size: 15px;
     color: #F8F5EC;
-    line-height: 1.55;
+    line-height: 1.6;
     white-space: pre-wrap;
     word-break: break-word;
   }
-  .message-label { margin: 14px 0 5px; font-size: 12px; color: #99AFAC; }
+  .message-label { margin: 18px 0 6px; font-size: 13px; color: #B1C1BC; }
   .btn {
     display: block;
     width: 100%;
-    padding: 14px 20px;
+    padding: 17px 20px;
     border: 0;
     border-radius: 8px;
     background: #F5FF8C;
     color: #162022;
     font-family: inherit;
-    font-size: 15px;
+    font-size: 16px;
     font-weight: bold;
     text-decoration: none;
     cursor: pointer;
@@ -166,9 +166,9 @@ const layout = ({ title, body, wide }) => `<!doctype html>
     font-size: 15px;
   }
   input[type="password"]:focus { outline: none; border-color: rgba(245,255,140,0.55); }
-  .fine { margin: 14px 0 0; font-size: 12px; color: #819E9C; }
-  .error { margin: 14px 0 0; font-size: 13px; color: #F8B4B4; }
-  .foot { margin: 20px 0 0; font-size: 12px; color: rgba(248,245,236,0.35); }
+  .fine { margin: 18px 0 0; font-size: 13px; line-height: 1.6; color: #99AFAC; }
+  .error { margin: 16px 0 0; font-size: 14px; color: #F8B4B4; }
+  .foot { margin: 26px 0 0; font-size: 13px; color: rgba(248,245,236,0.4); }
   .foot a { color: inherit; }
 </style>
 </head>
