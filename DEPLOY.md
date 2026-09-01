@@ -23,12 +23,37 @@ Then on the VPS over SSH:
 ```bash
 cd /var/www/drop-involve-backend
 git pull
-npm install
+npm ci
 pm2 restart drop-backend --update-env
 pm2 logs drop-backend --lines 10 --nostream
 ```
 
-`npm install` is only needed when dependencies changed, but it's harmless.
+`npm ci` is only needed when dependencies changed, but it's harmless.
+
+**Use `npm ci` here, never `npm install`.** `npm install` treats the lock file
+as a suggestion: when the installed tree doesn't match it — a different Node
+version, a package resolving differently — it rewrites `package-lock.json` to
+describe whatever it just did. That file is tracked in git, so the next
+`git pull` refuses with *"Your local changes would be overwritten by merge"*.
+It happened on 1 September after the Node 22 upgrade.
+
+`npm ci` installs exactly what the lock says, never writes to it, and fails
+loudly if the lock and `package.json` disagree. The server should reproduce
+what was tested, not decide for itself.
+
+If the server's lock has already drifted, keep a copy and discard it — the
+repo's version is authoritative:
+
+```bash
+cp package-lock.json /root/package-lock.vps-$(date +%F).json
+git status --short          # confirm package-lock.json is the ONLY change
+git checkout -- package-lock.json
+git pull
+```
+
+**Dependency changes belong on Windows**, where the repo lives: run
+`npm install <package>` or `npm audit fix` there, commit the updated lock, and
+let the VPS pull it.
 
 **Render** also auto-deploys from the same repo. It's the standby for old
 desktop builds and stays on Resend for mail, because it has no `SMTP_HOST`.
