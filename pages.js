@@ -8,7 +8,13 @@
  * Nothing is stored per link. Each page is rendered on demand from the link's
  * record in R2, which is why a thousand links doesn't mean a thousand files.
  *
- * Palette matches the app: Mørk grønn #003F46, Sand #F8F5EC, Gul #F5FF8C.
+ * Layout follows Filnedlasting_Involve_Mehdi.pdf: the download card pinned
+ * left, an optional case card to its right over a full-bleed background, and
+ * the Involve wordmark oversized and bleeding off the bottom. One slide is
+ * chosen at random per visit — see slides.js.
+ *
+ * On phones the case card is dropped entirely and the page falls back to the
+ * flat yellow variant, which is the first page of the PDF.
  */
 
 /**
@@ -24,11 +30,68 @@ const escapeHtml = (value = '') =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-// Inlined rather than linked: no extra request, no hosting, and it stays sharp
-// on any screen. Tinted to sand rather than pure white, which reads as pasted
-// on against the green.
-const LOGO = `<svg viewBox="0 0 1080 286" width="180" role="img" aria-label="Involve" xmlns="http://www.w3.org/2000/svg" style="height:auto;display:inline-block;">
-<g fill="#F8F5EC">
+// Involve brand palette. Defaults only — every one of these can be overridden
+// per slide from the admin, so a slide can be tuned to its own photograph
+// without a deploy.
+const INK = '#003F46';       // Mørk grønn
+const INK_DEEP = '#162022';  // Sort
+const SAND = '#F8F5EC';      // Sand
+const BRAND = '#F5FF8C';     // Gul
+const CASE_CARD = '#0B1416'; // The dark case panel
+const CASE_OPACITY = 0.75;   // Lets the background photograph read through it
+const CTA_COLOR = '#003F48'; // The "Se caset her" button
+
+/**
+ * Colours and image URLs from slides end up inside a style attribute, so they
+ * have to be constrained. Without this, a value containing a quote breaks out
+ * of the attribute and can inject markup. Slides are written by staff rather
+ * than the public, but "only our own people can edit it" is not a reason to
+ * build an injection hole.
+ */
+const safeColor = (value, fallback) => {
+  const text = String(value ?? '').trim();
+  const ok =
+    /^#[0-9a-f]{3,8}$/i.test(text) ||
+    /^rgba?\(\s*[\d.\s,%]+\)$/i.test(text) ||
+    /^[a-z]{3,20}$/i.test(text); // named colours
+  return ok ? text : fallback;
+};
+
+/**
+ * Single quotes survive encodeURI, and url('…') is quoted — so escape them.
+ * Only http and https: without the scheme check a CTA of `javascript:alert(1)`
+ * would run when a recipient clicked it.
+ */
+const safeUrl = (value) => {
+  const text = String(value ?? '').trim();
+  if (!/^https?:\/\//i.test(text)) return '';
+  return encodeURI(text).replace(/'/g, '%27');
+};
+
+/**
+ * Hex to rgba, so a slide colour can be given a transparency without the
+ * person editing it having to think in rgba. Falls back to the input untouched
+ * if it isn't a plain hex, which lets someone paste an rgba() string directly.
+ */
+const withAlpha = (hex, alpha) => {
+  const match = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!match) return hex;
+
+  let value = match[1];
+  if (value.length === 3) value = value.split('').map((c) => c + c).join('');
+
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  const a = Math.min(Math.max(Number(alpha), 0), 1);
+
+  return `rgba(${r}, ${g}, ${b}, ${Number.isFinite(a) ? a : 1})`;
+};
+
+// The wordmark, inlined: no extra request, sharp at any size. Drawn at the
+// bottom of the page at a size that deliberately runs off the edge.
+const WORDMARK = `<svg viewBox="0 0 1080 286" role="img" aria-label="Involve" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMax meet">
+<g fill="currentColor">
 <polygon points="440.7 86 392.4 86 345.3 198.2 298.8 86 250.6 86 335.7 279.1 355.6 279.1 440.7 86"/>
 <polygon points="892.5 86 843.6 86 796.6 198.2 750.1 86 701.2 86 786.9 279.1 806.8 279.1 892.5 86"/>
 <path d="M528.6,82.9c-50.9,0-92,29.4-92,99.3s41.1,99.3,92,99.3,92-29.4,92-99.3-41.1-99.3-92-99.3ZM528.6,244.8c-26.4,0-47.2-18.4-47.2-62.5s21.5-62.5,47.2-62.5,47.2,18.4,47.2,62.5-21.5,62.5-47.2,62.5Z"/>
@@ -37,6 +100,8 @@ const LOGO = `<svg viewBox="0 0 1080 286" width="180" role="img" aria-label="Inv
 <path d="M686.2,4.4l-44.8,11v223.8c0,28.2,10.4,42.3,30.7,42.3s29.4-8.6,35.6-20.2c-5.5-1.8-21.5-6.7-21.5-42.3V4.4Z"/>
 <path d="M987.2,83c-51.2-1.9-78.1,27.5-89.7,53.1-11.6,25.6-18.7,84,15.3,119,40.8,42,123.2,26.2,140.2,6.1l-17.1-34.2c-21.4,21.4-65.5,20.9-85.4,3.1-17.3-15.6-15.9-35.4-15.9-35.4h136.7c5.1-10.4,15.2-108-84.2-111.6ZM986,119c47.6,0,46.1,41.5,46.1,41.5h-95.5s5.5-41.5,50-41.5h-.6Z"/>
 </g></svg>`;
+
+const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
 const formatBytes = (bytes) => {
   const size = Number(bytes);
@@ -73,114 +138,384 @@ const describeType = (fileName = '') => {
   return kinds[ext] || '';
 };
 
-const layout = ({ title, body, wide }) => `<!doctype html>
+// TODO: self-host these. Google Fonts is a third-party request on a page that
+// has to open fast for people outside Involve, and it hands them a dependency
+// we don't control. Inter stands in for Neue Haas Grotesk Text Pro and
+// JetBrains Mono for Andale Mono, both of which need paid webfont licences.
+const FONTS = `
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">`;
+
+const CSS = `
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    --ink: ${INK};
+    --ink-deep: ${INK_DEEP};
+    --sand: ${SAND};
+    --brand: ${BRAND};
+    --case: ${CASE_CARD};
+    --sans: Inter, "Neue Haas Grotesk Text Pro", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --mono: "JetBrains Mono", "Andale Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--stage-bg, ${INK});
+    color: ${INK_DEEP};
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* The background photo. A separate layer rather than a body background so it
+     can be dimmed without tinting the cards sitting on top of it. */
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .backdrop::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 32, 36, 0.28);
+  }
+
+  .stage {
+    position: relative;
+    z-index: 1;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 48px clamp(20px, 5vw, 88px) 0;
+  }
+
+  .panels {
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    gap: clamp(20px, 3vw, 40px);
+    flex-wrap: nowrap;
+  }
+
+  /* --- The download card -------------------------------------------------- */
+
+  .card {
+    width: 100%;
+    max-width: 420px;
+    flex: 0 0 auto;
+    background: ${SAND};
+    border-radius: 20px;
+    padding: 30px 32px 32px;
+    color: ${INK};
+  }
+
+  .eyebrow {
+    margin: 0 0 40px;
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.02em;
+    color: ${INK};
+  }
+
+  .from-label { margin: 0 0 4px; font-size: 15px; color: ${INK}; }
+  .from {
+    margin: 0 0 22px;
+    font-size: 21px;
+    font-weight: 700;
+    color: ${INK};
+    word-break: break-word;
+  }
+
+  .details {
+    background: #FFFFFF;
+    border-radius: 12px;
+    padding: 22px 24px;
+    margin-bottom: 22px;
+  }
+
+  .field-label {
+    margin: 0 0 4px;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: ${INK};
+    opacity: 0.75;
+  }
+
+  .filename {
+    margin: 0 0 18px;
+    font-size: 16px;
+    font-weight: 700;
+    color: ${INK};
+    word-break: break-word;
+  }
+
+  .message {
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.5;
+    color: ${INK};
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* Button and its icon chip, split by a notch as in the design. */
+  .action { display: flex; gap: 4px; }
+
+  .btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 19px 20px;
+    border: 0;
+    border-radius: 10px;
+    background: ${BRAND};
+    color: ${INK_DEEP};
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .btn-icon {
+    flex: 0 0 62px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: ${BRAND};
+    color: ${INK_DEEP};
+  }
+
+  .btn:hover, .action:hover .btn-icon { background: #E9F47D; }
+
+  input[type="password"] {
+    width: 100%;
+    padding: 15px 16px;
+    margin-bottom: 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(0, 63, 70, 0.25);
+    background: #FFFFFF;
+    color: ${INK};
+    font-family: var(--sans);
+    font-size: 15px;
+  }
+  input[type="password"]:focus { outline: 2px solid ${INK}; outline-offset: -2px; }
+
+  .fine {
+    margin: 16px 0 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: rgba(0, 63, 70, 0.75);
+  }
+  .error {
+    margin: 14px 0 0;
+    font-size: 14px;
+    font-weight: 500;
+    color: #A4161A;
+  }
+
+  /* --- The case card ------------------------------------------------------ */
+
+  .case {
+    display: flex;
+    gap: 0;
+    max-width: 660px;
+    /* Translucent by default so the photograph behind still reads through. */
+    background: var(--case-bg, ${withAlpha(CASE_CARD, CASE_OPACITY)});
+    border-radius: 16px;
+    overflow: hidden;
+    color: var(--case-text, ${SAND});
+  }
+
+  .case-media { flex: 0 0 42%; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+
+  .case-thumb {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 8px;
+    background: ${INK};
+    background-size: cover;
+    background-position: center;
+  }
+
+  .case-cta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    border-radius: 8px;
+    background: var(--cta-bg, ${CTA_COLOR});
+    color: var(--case-text, ${SAND});
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-decoration: none;
+  }
+  .case-cta:hover { filter: brightness(1.25); }
+  .case-cta span:last-child { color: ${BRAND}; font-size: 18px; line-height: 1; }
+
+  .case-body { flex: 1; padding: 26px 26px 26px 8px; display: flex; flex-direction: column; }
+
+  .case-kicker {
+    margin: 0 0 16px;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: ${SAND};
+    opacity: 0.85;
+  }
+
+  .case-title { margin: 0 0 12px; font-size: 20px; font-weight: 700; line-height: 1.25; }
+  .case-text  { margin: 0 0 auto; font-size: 14.5px; line-height: 1.55; opacity: 0.92; }
+  .case-name  { margin: 22px 0 0; font-size: 17px; font-weight: 700; }
+  .case-role  {
+    margin: 2px 0 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    opacity: 0.85;
+  }
+
+  /* --- Tagline variant (the flat yellow page) ----------------------------- */
+
+  .tagline {
+    max-width: 760px;
+    margin: -6px 0 0;
+    font-size: clamp(34px, 4.6vw, 68px);
+    font-weight: 500;
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    color: var(--tagline-color, ${INK});
+  }
+
+  /* --- Wordmark ----------------------------------------------------------- */
+
+  .wordmark {
+    position: relative;
+    margin: 40px 0 0;
+    margin-left: clamp(-20px, -2vw, 0px);
+    height: clamp(120px, 19vw, 260px);
+    color: var(--wordmark-color, ${INK_DEEP});
+    opacity: var(--wordmark-opacity, 1);
+    pointer-events: none;
+  }
+  .wordmark svg { height: 100%; width: auto; display: block; }
+
+  @media (max-width: 900px) {
+    /* The case card is dropped on phones rather than stacked: it's promotional,
+       and the person is here to collect a file. The page falls back to the flat
+       yellow variant so there's no background photo to download either. */
+    .backdrop { display: none; }
+    body { background: ${BRAND}; }
+    .case, .tagline { display: none; }
+    .stage { padding: 28px 20px 0; }
+    .panels { display: block; }
+    .card { max-width: none; }
+    .wordmark { color: ${INK_DEEP}; opacity: 1; height: clamp(90px, 26vw, 150px); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+`;
+
+/**
+ * @param {object} slide  see slides.js — may be null, in which case the page
+ *                        falls back to the flat yellow tagline variant.
+ */
+const layout = ({ title, body, slide }) => {
+  const background = slide?.backgroundUrl
+    ? `<div class="backdrop" style="background-image:url('${safeUrl(slide.backgroundUrl)}')"></div>`
+    : '';
+
+  // Every colour is overridable per slide, so a slide can be tuned to its own
+  // photograph without a deploy. Anything left unset falls back to the brand
+  // default in the stylesheet.
+  //
+  // Without a photo behind it the wordmark needs to sit back, or it fights the
+  // cards for attention. Over a photo it's already knocked back by the dimming.
+  const opacity = Number(slide?.caseOpacity);
+  const stageStyle = [
+    `--stage-bg:${safeColor(slide?.pageColor, BRAND)}`,
+    `--case-bg:${withAlpha(
+      safeColor(slide?.caseColor, CASE_CARD),
+      Number.isFinite(opacity) ? opacity : CASE_OPACITY
+    )}`,
+    `--cta-bg:${safeColor(slide?.ctaColor, CTA_COLOR)}`,
+    `--case-text:${safeColor(slide?.caseTextColor, SAND)}`,
+    `--tagline-color:${safeColor(slide?.taglineColor, INK)}`,
+    slide?.backgroundUrl ? `--wordmark-color:${INK};--wordmark-opacity:0.85` : '',
+  ].filter(Boolean).join(';');
+
+  return `<!doctype html>
 <html lang="no">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light">
 <title>Drop Involve${title ? ` – ${escapeHtml(title)}` : ''}</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; }
-  body {
-    margin: 0;
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 32px 16px;
-    background: #003F46;
-    color: #F8F5EC;
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
-  .card {
-    width: 100%;
-    max-width: ${wide ? '520px' : '440px'};
-    background: #0A464D;
-    border: 1px solid #22585D;
-    border-radius: 18px;
-    padding: 40px 38px;
-    text-align: center;
-  }
-  .wordmark { margin-bottom: 6px; }
-  .service {
-    margin: 0 0 30px;
-    font-size: 13px;
-    letter-spacing: 0.06em;
-    color: #819E9C;
-  }
-  h1 { font-size: 23px; margin: 0 0 10px; font-weight: bold; }
-  p  { font-size: 15px; line-height: 1.65; color: #B1C1BC; margin: 0 0 8px; }
-  .from { color: #F8F5EC; font-size: 18px; font-weight: 500; margin: 0 0 26px; }
-  .label { font-size: 14px; margin: 0 0 6px; color: #B1C1BC; }
-  .panel {
-    background: #0E393E;
-    border-radius: 10px;
-    padding: 22px;
-    margin-bottom: 26px;
-    text-align: left;
-  }
-  .filename {
-    margin: 0 0 3px;
-    font-size: 17px;
-    font-weight: 500;
-    color: #F8F5EC;
-    word-break: break-word;
-  }
-  .meta { margin: 0; font-size: 13px; color: #99AFAC; }
-  .message {
-    margin: 16px 0 0;
-    font-size: 15px;
-    color: #F8F5EC;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .message-label { margin: 18px 0 6px; font-size: 13px; color: #B1C1BC; }
-  .btn {
-    display: block;
-    width: 100%;
-    padding: 17px 20px;
-    border: 0;
-    border-radius: 8px;
-    background: #F5FF8C;
-    color: #162022;
-    font-family: inherit;
-    font-size: 16px;
-    font-weight: bold;
-    text-decoration: none;
-    cursor: pointer;
-  }
-  .btn:hover { background: #E8F27F; }
-  input[type="password"] {
-    width: 100%;
-    padding: 12px 14px;
-    margin-bottom: 10px;
-    border-radius: 8px;
-    border: 1px solid rgba(248, 245, 236, 0.15);
-    background: rgba(248, 245, 236, 0.06);
-    color: #F8F5EC;
-    font-family: inherit;
-    font-size: 15px;
-  }
-  input[type="password"]:focus { outline: none; border-color: rgba(245,255,140,0.55); }
-  .fine { margin: 18px 0 0; font-size: 13px; line-height: 1.6; color: #99AFAC; }
-  .error { margin: 16px 0 0; font-size: 14px; color: #F8B4B4; }
-  .foot { margin: 26px 0 0; font-size: 13px; color: rgba(248,245,236,0.4); }
-  .foot a { color: inherit; }
-</style>
+${FONTS}
+<style>${CSS}</style>
 </head>
-<body>
-  <div class="card">
-    <div class="wordmark">${LOGO}</div>
-    <p class="service">DROP.INVOLVE.NO</p>
-    ${body}
-    <p class="foot"><a href="https://involve.no">involve.no</a></p>
+<body style="${stageStyle}">
+  ${background}
+  <div class="stage">
+    <div class="panels">
+      ${body}
+    </div>
+    <div class="wordmark">${WORDMARK}</div>
   </div>
 </body>
 </html>`;
+};
+
+/** The right-hand promotional card. Omitted when there's no slide to show. */
+const caseCard = (slide) => {
+  if (!slide || !slide.title) return '';
+
+  const thumb = slide.thumbUrl
+    ? `style="background-image:url('${safeUrl(slide.thumbUrl)}')"`
+    : '';
+
+  return `
+    <div class="case">
+      <div class="case-media">
+        <div class="case-thumb" ${thumb}></div>
+        ${slide.ctaUrl ? `
+          <a class="case-cta" href="${safeUrl(slide.ctaUrl)}" target="_blank" rel="noopener noreferrer">
+            <span>${escapeHtml(slide.ctaLabel || 'Les mer')}</span>
+            <span aria-hidden="true">+</span>
+          </a>
+        ` : ''}
+      </div>
+      <div class="case-body">
+        ${slide.kicker ? `<p class="case-kicker">${escapeHtml(slide.kicker)}</p>` : ''}
+        <h2 class="case-title">${escapeHtml(slide.title)}</h2>
+        <p class="case-text">${escapeHtml(slide.body || '')}</p>
+        ${slide.personName ? `<p class="case-name">${escapeHtml(slide.personName)}</p>` : ''}
+        ${slide.personRole ? `<p class="case-role">${escapeHtml(slide.personRole)}</p>` : ''}
+      </div>
+    </div>`;
+};
 
 /**
  * The page a recipient lands on. Replaces the bare redirect so there's a
@@ -188,7 +523,7 @@ const layout = ({ title, body, wide }) => `<!doctype html>
  * getting and who from before committing to it.
  */
 const landingPage = ({
-  shortId, fileName, fileSize, senderEmail, message, expiresAt, hasPassword, error, token,
+  shortId, fileName, fileSize, senderEmail, message, expiresAt, hasPassword, error, token, slide,
 }) => {
   const type = describeType(fileName);
   const size = formatBytes(fileSize);
@@ -200,22 +535,23 @@ const landingPage = ({
   // now sent from the download rather than from opening this page.
   const ref = token ? `?r=${encodeURIComponent(token)}` : '';
 
-  return layout({
-    title: fileName ? `${fileName}` : 'Fil klar for nedlasting',
-    wide: true,
-    body: `
+  const card = `
+    <div class="card">
+      <p class="eyebrow">DROP.INVOLVE.NO</p>
+
       ${senderEmail ? `
-        <p class="label">Du har fått en fil fra</p>
+        <p class="from-label">Du har mottatt en fil fra:</p>
         <p class="from">${escapeHtml(senderEmail)}</p>
       ` : `
-        <h1>Du har fått en fil</h1>
+        <p class="from">Du har mottatt en fil</p>
       `}
 
-      <div class="panel">
+      <div class="details">
+        <p class="field-label">FILNAVN</p>
         <p class="filename">${escapeHtml(fileName || 'Ukjent filnavn')}</p>
-        ${meta ? `<p class="meta">${escapeHtml(meta)}</p>` : ''}
+        ${meta ? `<p class="field-label">STØRRELSE</p><p class="filename">${escapeHtml(meta)}</p>` : ''}
         ${message ? `
-          <p class="message-label">Melding</p>
+          <p class="field-label">MELDING</p>
           <p class="message">${escapeHtml(message)}</p>
         ` : ''}
       </div>
@@ -223,18 +559,33 @@ const landingPage = ({
       ${hasPassword ? `
         <form method="POST" action="/s/${encodeURIComponent(shortId)}${ref}">
           <input type="password" name="password" placeholder="Passord" autocomplete="off" autofocus required>
-          <button class="btn" type="submit">Åpne og last ned</button>
+          <div class="action">
+            <button class="btn" type="submit">Åpne og last ned</button>
+            <span class="btn-icon">${DOWNLOAD_ICON}</span>
+          </div>
         </form>
         <p class="fine">Avsenderen har satt et passord. Du skal ha fått det på en
         annen måte enn i e-posten.</p>
       ` : `
-        <a class="btn" href="/s/${encodeURIComponent(shortId)}/d${ref}">Last ned filen</a>
+        <div class="action">
+          <a class="btn" href="/s/${encodeURIComponent(shortId)}/d${ref}">Last ned filen</a>
+          <a class="btn-icon" href="/s/${encodeURIComponent(shortId)}/d${ref}" aria-hidden="true" tabindex="-1">${DOWNLOAD_ICON}</a>
+        </div>
       `}
 
       ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
+      ${expiry ? `<p class="fine">Lenken utløper ${escapeHtml(expiry)}. Filen slettes automatisk etterpå.</p>` : ''}
+    </div>`;
 
-      ${expiry ? `<p class="fine">Lenken utløper ${escapeHtml(expiry)}<br>Filen slettes automatisk etterpå</p>` : ''}
-    `,
+  // The flat variant has no case card; it carries the agency tagline instead.
+  const right = slide?.tagline
+    ? `<p class="tagline">${escapeHtml(slide.tagline)}</p>`
+    : caseCard(slide);
+
+  return layout({
+    title: fileName || 'Fil klar for nedlasting',
+    slide,
+    body: `${card}${right}`,
   });
 };
 
@@ -243,17 +594,27 @@ const expiredPage = () =>
   layout({
     title: 'Lenken er utløpt',
     body: `
-      <h1>Lenken er utløpt</h1>
-      <p>Filer på Drop slettes automatisk etter en tid, og lenken virker derfor ikke lenger.</p>
-      <p>Ta kontakt med avsenderen for å få en ny lenke.</p>
-    `,
+      <div class="card">
+        <p class="eyebrow">DROP.INVOLVE.NO</p>
+        <p class="from">Lenken er utløpt</p>
+        <div class="details">
+          <p class="message">Filer på Drop slettes automatisk etter en tid, og lenken virker derfor ikke lenger.
+
+Ta kontakt med avsenderen for å få en ny lenke.</p>
+        </div>
+      </div>`,
   });
 
 /** Anything else that goes wrong. */
 const errorPage = ({ title = 'Noe gikk galt', message = 'Prøv igjen senere.' }) =>
   layout({
     title,
-    body: `<h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p>`,
+    body: `
+      <div class="card">
+        <p class="eyebrow">DROP.INVOLVE.NO</p>
+        <p class="from">${escapeHtml(title)}</p>
+        <div class="details"><p class="message">${escapeHtml(message)}</p></div>
+      </div>`,
   });
 
 module.exports = { landingPage, expiredPage, errorPage, escapeHtml, formatBytes };

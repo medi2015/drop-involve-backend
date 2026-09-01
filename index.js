@@ -17,6 +17,7 @@ const { nanoid } = require('nanoid');
 const { OAuth2Client } = require('google-auth-library');
 const { sendMail, verifyTransport, backend } = require('./mailer');
 const { landingPage, expiredPage, errorPage } = require('./pages');
+const { pickSlide, renderWithSlide } = require('./slides');
 const { fileSharedEmail, downloadReceiptEmail } = require('./emails');
 
 dotenv.config();
@@ -1268,16 +1269,21 @@ app.get('/s/:shortId', async (req, res) => {
   // when a password is accepted. Otherwise opening the link twice out of
   // curiosity would read as two downloads.
   res.type('html').send(
-    landingPage({
-      shortId,
-      fileName: record.fileName,
-      fileSize: record.fileSize,
-      senderEmail: record.senderEmail,
-      message: record.message,
-      expiresAt: record.expiresAt,
-      hasPassword: Boolean(record.passwordHash),
-      token: typeof req.query.r === 'string' ? req.query.r : null,
-    })
+    renderWithSlide(
+      (slide) =>
+        landingPage({
+          shortId,
+          fileName: record.fileName,
+          fileSize: record.fileSize,
+          senderEmail: record.senderEmail,
+          message: record.message,
+          expiresAt: record.expiresAt,
+          hasPassword: Boolean(record.passwordHash),
+          token: typeof req.query.r === 'string' ? req.query.r : null,
+          slide,
+        }),
+      pickSlide()
+    )
   );
 });
 
@@ -1315,17 +1321,22 @@ app.post('/s/:shortId', async (req, res) => {
 
   const page = (error, status) =>
     res.status(status).type('html').send(
-      landingPage({
-        shortId,
-        fileName: record.fileName,
-        fileSize: record.fileSize,
-        senderEmail: record.senderEmail,
-        message: record.message,
-        expiresAt: record.expiresAt,
-        hasPassword: true,
-        error,
-        token: typeof req.query.r === 'string' ? req.query.r : null,
-      })
+      renderWithSlide(
+        (slide) =>
+          landingPage({
+            shortId,
+            fileName: record.fileName,
+            fileSize: record.fileSize,
+            senderEmail: record.senderEmail,
+            message: record.message,
+            expiresAt: record.expiresAt,
+            hasPassword: true,
+            error,
+            token: typeof req.query.r === 'string' ? req.query.r : null,
+            slide,
+          }),
+        pickSlide()
+      )
     );
 
   if (!record.passwordHash) {
