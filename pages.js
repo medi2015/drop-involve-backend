@@ -138,14 +138,24 @@ const describeType = (fileName = '') => {
   return kinds[ext] || '';
 };
 
-// TODO: self-host these. Google Fonts is a third-party request on a page that
-// has to open fast for people outside Involve, and it hands them a dependency
-// we don't control. Inter stands in for Neue Haas Grotesk Text Pro and
-// JetBrains Mono for Andale Mono, both of which need paid webfont licences.
+// Involve's own Adobe Fonts kit, the same one involve.no uses.
+//
+// Kit lnt3nfg carries neue-haas-grotesk-text (400/700 plus italics),
+// neue-haas-grotesk-display and andale-mono-mt-pro (400 only). There is no
+// weight 500 in it, so nothing here asks for one — a browser fakes a missing
+// weight by smearing the outlines, which on a display face is visible.
+//
+// Adobe's terms don't allow self-hosting these files, so this is a third-party
+// request on a page that has to open fast for people outside Involve. Preconnect
+// covers most of that cost. The stack falls back to Helvetica if Adobe is
+// unreachable, which is a duller page rather than a broken one.
+//
+// No domain configuration is needed: Adobe web projects work on any host, and
+// any number of them. (Typekit required a domain allowlist; Adobe removed it.)
 const FONTS = `
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">`;
+<link rel="preconnect" href="https://use.typekit.net" crossorigin>
+<link rel="preconnect" href="https://p.typekit.net" crossorigin>
+<link rel="stylesheet" href="https://use.typekit.net/lnt3nfg.css">`;
 
 const CSS = `
   *, *::before, *::after { box-sizing: border-box; }
@@ -156,8 +166,9 @@ const CSS = `
     --sand: ${SAND};
     --brand: ${BRAND};
     --case: ${CASE_CARD};
-    --sans: Inter, "Neue Haas Grotesk Text Pro", "Helvetica Neue", Helvetica, Arial, sans-serif;
-    --mono: "JetBrains Mono", "Andale Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: "neue-haas-grotesk-text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --display: "neue-haas-grotesk-display", "neue-haas-grotesk-text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --mono: "andale-mono-mt-pro", "Andale Mono", ui-monospace, Menlo, Consolas, monospace;
   }
 
   html, body { height: 100%; }
@@ -283,7 +294,7 @@ const CSS = `
     color: ${INK_DEEP};
     font-family: var(--mono);
     font-size: 15px;
-    font-weight: 500;
+    font-weight: 400;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     text-decoration: none;
@@ -324,7 +335,7 @@ const CSS = `
   .error {
     margin: 14px 0 0;
     font-size: 14px;
-    font-weight: 500;
+    font-weight: 700;
     color: #A4161A;
   }
 
@@ -399,8 +410,9 @@ const CSS = `
   .tagline {
     max-width: 760px;
     margin: -6px 0 0;
+    font-family: var(--display);
     font-size: clamp(34px, 4.6vw, 68px);
-    font-weight: 500;
+    font-weight: 400;
     line-height: 1.1;
     letter-spacing: -0.015em;
     color: var(--tagline-color, ${INK});
