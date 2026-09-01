@@ -1552,6 +1552,28 @@ app.post('/s/:shortId', async (req, res) => {
 });
 
 
+/**
+ * Nothing matched.
+ *
+ * nginx used to answer unknown paths itself, from a hand-written list of every
+ * route. That list was a recurring source of confusion — a new endpoint 404s
+ * until someone remembers to add a line — and it was never a security boundary,
+ * since every route that needs a session checks for one itself. nginx now
+ * forwards everything, so this is what a stray URL gets: a branded page rather
+ * than Express's "Cannot GET /whatever", which announces the framework.
+ */
+app.use((req, res) => {
+  if (req.accepts('html')) {
+    return res.status(404).type('html').send(
+      errorPage({
+        title: 'Siden finnes ikke',
+        message: 'Sjekk lenken, eller be avsenderen om å dele den på nytt.',
+      })
+    );
+  }
+  res.status(404).json({ error: 'Not found' });
+});
+
 // Catch-all error handler. Without this, a rejected origin surfaces as an
 // Express stack trace — unhelpful to the user and more than we want to reveal.
 // eslint-disable-next-line no-unused-vars
