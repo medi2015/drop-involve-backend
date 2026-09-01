@@ -1041,9 +1041,6 @@ app.post('/send-email', requireSession, async (req, res) => {
   const { emailTo, message, downloadUrl, fileName, requireReceipt, expiryDays, hasPassword } = req.body;
   // The sender is whoever is signed in — not whatever the client claims.
   const emailFrom = req.session.email;
-  // --- ADD THIS NEW TRACKING LINK ---
-  const trackingLink = `https://file.involve.no/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}`;
-  // ----------------------------------
 
   // UPDATED: Bulletproof splitting for multiple emails (handles spaces, commas, and semicolons)
   const recipientList = emailTo
@@ -1055,14 +1052,46 @@ app.post('/send-email', requireSession, async (req, res) => {
   // and a failure here mustn't stop the email going out.
   rememberContacts(req.session?.sub, recipientList);
 
+  // Receipts used to be a /track-download link that emailed the sender and then
+  // redirected. That fired the moment the recipient clicked, which since the
+  // landing page landed means "opened the page", not "took the file" — the
+  // sender was told something untrue. Now each recipient gets a token, the
+  // token is stored on the link record, and the receipt is sent from the
+  // download itself. See markDownloaded further down.
+  const shortId = String(downloadUrl || '').match(/\/s\/([^/?#]+)/)?.[1] || null;
+  const tokens = new Map(); // recipient -> token
+
+  if (requireReceipt && shortId) {
+    for (const recipient of recipientList) tokens.set(recipient, nanoid(10));
+
+    try {
+      const key = `short-urls/${shortId}.json`;
+      const record = await readJson(key);
+
+      if (record) {
+        record.notify = {
+          sender: emailFrom,
+          // Merged rather than replaced: the same link can be sent onward to
+          // more people later, and the earlier tokens are already in inboxes.
+          recipients: {
+            ...(record.notify?.recipients || {}),
+            ...Object.fromEntries([...tokens].map(([email, token]) => [token, email])),
+          },
+        };
+        await writeJson(key, record);
+      }
+    } catch (error) {
+      // A receipt is worth less than the file arriving. Send anyway.
+      console.warn(`[receipts] could not attach to ${shortId}:`, error.name);
+      tokens.clear();
+    }
+  }
+
   try {
     // Loop through each recipient to give them a personalized email
     const emailPromises = recipientList.map(recipientEmail => {
-
-      // Determine which link to give them based on the checkbox
-      const finalLink = requireReceipt
-        ? `https://file.involve.no/track-download?fileUrl=${encodeURIComponent(downloadUrl)}&senderEmail=${encodeURIComponent(emailFrom)}&fileName=${encodeURIComponent(fileName)}&downloader=${encodeURIComponent(recipientEmail)}`
-        : downloadUrl;
+      const token = tokens.get(recipientEmail);
+      const suffix = token ? `?r=${encodeURIComponent(token)}` : '';
 
 return sendMail({
         from: `Drop Involve <${emailFrom}>`,
@@ -1073,10 +1102,8 @@ return sendMail({
           emailFrom,
           fileName,
           message,
-          link: finalLink,
-          // The plain short link when receipts are off; otherwise the tracking
-          // link already points at the landing page.
-          directLink: `${downloadUrl}/d`,
+          link: `${downloadUrl}${suffix}`,
+          directLink: `${downloadUrl}/d${suffix}`,
           expiryDays: Number(expiryDays) || 7,
           hasPassword: Boolean(hasPassword),
         }),
@@ -1094,14 +1121,26 @@ return sendMail({
 });
 
 /**
- * Track Download & Redirect
+ * Retired. Kept only for emails already sitting in inboxes.
+ *
+ * This used to email the sender a "downloaded" receipt and then redirect. It
+ * fired on the click, which since the landing page arrived means the recipient
+ * had merely opened a page — so senders were told files had been collected when
+ * they hadn't. Receipts now come from markDownloaded, at the actual download.
+ *
+ * It stays as a plain redirect so old links keep working, but it no longer
+ * sends anything. Old links carry no recipient token, so a download through one
+ * still counts; the receipt just won't name who.
+ *
+ * Safe to delete once every link sent before 1 September 2026 has expired —
+ * links last at most 7 days.
  */
-app.get('/track-download', async (req, res) => {
-  // `downloader` is set only when the sender asked for a receipt; the email
-  // template omits the line when it's absent.
-  const { fileUrl, senderEmail, fileName, downloader } = req.query;
+app.get('/track-download', (req, res) => {
+  const { fileUrl } = req.query;
 
-  if (!fileUrl || !senderEmail) {
+  // Only ever redirect to our own short links: this takes a URL from the query
+  // string, and without the check it would forward anyone anywhere.
+  if (!fileUrl || !/^https:\/\/file\.involve\.no\/s\//.test(String(fileUrl))) {
     return res.status(400).type('html').send(
       errorPage({
         title: 'Ugyldig lenke',
@@ -1110,26 +1149,98 @@ app.get('/track-download', async (req, res) => {
     );
   }
 
-  // 1. Instantly redirect the user to the actual Cloudflare file so they don't wait
-  res.redirect(fileUrl);
-
-  // 2. Send the receipt email to the sender in the background
-  try {
-    await sendMail({
-      from: process.env.MAIL_FROM || 'Drop Involve <filer@involve.no>',
-      to: senderEmail,
-      subject: `Nedlastingsbekreftelse: ${fileName}`,
-      html: downloadReceiptEmail({ fileName, downloader }),
-    });
-  } catch (err) {
-    console.error("Kunne ikke sende kvittering:", err);
-  }
+  res.redirect(302, String(fileUrl));
 });
 
 /**
  * Redirect short URLs to the long presigned S3 URLs
  */
 /** Reads a short-link record from R2. Returns null if it's gone. */
+// --- Counting a download --------------------------------------------------
+//
+// Two things get this wrong if you count every request to /d.
+//
+// Mail security (Outlook Safe Links, Proofpoint, Mimecast and friends) fetches
+// every URL in an email to check it before the human ever sees it. Chat apps do
+// the same to build link previews. Those hits are indistinguishable from a
+// person at the HTTP level in the general case, but most identify themselves in
+// the user agent, and none of them are triggered by a click.
+//
+// Browsers also prefetch links they think you're about to follow, and announce
+// it in Sec-Purpose.
+//
+// This is a heuristic and it will never be exact. It is much closer than
+// counting everything.
+const AUTOMATED_AGENTS =
+  /bot|crawl|spider|slurp|preview|scan|fetch|monitor|curl|wget|python-requests|okhttp|go-http|java\/|headless|phantom|proofpoint|mimecast|barracuda|symantec|messagelabs|forcepoint|safelinks|skypeuripreview|slackbot|whatsapp|telegram|discord|facebookexternalhit|twitterbot|linkedinbot/i;
+
+const looksAutomated = (req) => {
+  if (req.method === 'HEAD') return true;
+
+  const purpose = `${req.get('sec-purpose') || ''} ${req.get('purpose') || ''} ${req.get('x-purpose') || ''}`;
+  if (/prefetch|preview/i.test(purpose)) return true;
+
+  const agent = req.get('user-agent') || '';
+  if (!agent) return true; // a browser always sends one
+  return AUTOMATED_AGENTS.test(agent);
+};
+
+// A single click can produce more than one request — a retry, a reload, the
+// browser re-issuing after a redirect. Collapse anything from the same
+// recipient on the same link inside this window into one download.
+const DOWNLOAD_DEDUPE_MS = 10 * 60 * 1000;
+const recentDownloads = new Map(); // key -> timestamp
+
+const alreadyCounted = (shortId, who) => {
+  const key = `${shortId}:${who}`;
+  const now = Date.now();
+
+  for (const [existing, at] of recentDownloads) {
+    if (now - at > DOWNLOAD_DEDUPE_MS) recentDownloads.delete(existing);
+  }
+
+  if (recentDownloads.has(key)) return true;
+  recentDownloads.set(key, now);
+  return false;
+};
+
+/**
+ * Records the download and, if the sender asked for a receipt, tells them.
+ *
+ * Always called after the redirect has gone out, so none of it delays the
+ * recipient and a failure here can't break a download.
+ */
+const markDownloaded = async (req, record, shortId) => {
+  if (looksAutomated(req)) {
+    console.log(`[downloads] ignored automated hit on ${shortId}`);
+    return;
+  }
+
+  const token = typeof req.query.r === 'string' ? req.query.r : null;
+  const who = token || req.get('cf-connecting-ip') || req.ip || 'unknown';
+  if (alreadyCounted(shortId, who)) return;
+
+  await recordDownload(record.owner, shortId);
+
+  const notify = record.notify;
+  if (!notify?.sender) return;
+
+  try {
+    await sendMail({
+      from: process.env.MAIL_FROM || 'Drop Involve <filer@involve.no>',
+      to: notify.sender,
+      subject: `Nedlastingsbekreftelse: ${record.fileName || 'fil'}`,
+      html: downloadReceiptEmail({
+        fileName: record.fileName || 'fil',
+        // Named only when we know which recipient this token was issued to.
+        downloader: token ? notify.recipients?.[token] || null : null,
+      }),
+    });
+  } catch (error) {
+    console.error('Kunne ikke sende kvittering:', error);
+  }
+};
+
 const readShortLink = async (shortId) => {
   const record = await readJson(`short-urls/${shortId}.json`);
   if (!record) console.warn(`Short link ${shortId} unavailable`);
@@ -1165,6 +1276,7 @@ app.get('/s/:shortId', async (req, res) => {
       message: record.message,
       expiresAt: record.expiresAt,
       hasPassword: Boolean(record.passwordHash),
+      token: typeof req.query.r === 'string' ? req.query.r : null,
     })
   );
 });
@@ -1188,7 +1300,7 @@ app.get('/s/:shortId/d', async (req, res) => {
 
   res.redirect(302, record.longUrl);
   // After the redirect, so counting never delays the recipient.
-  recordDownload(record.owner, shortId);
+  markDownloaded(req, record, shortId);
 });
 
 /** Password submitted from the landing page. */
@@ -1212,12 +1324,13 @@ app.post('/s/:shortId', async (req, res) => {
         expiresAt: record.expiresAt,
         hasPassword: true,
         error,
+        token: typeof req.query.r === 'string' ? req.query.r : null,
       })
     );
 
   if (!record.passwordHash) {
     res.redirect(302, record.longUrl);
-    recordDownload(record.owner, shortId);
+    markDownloaded(req, record, shortId);
     return;
   }
 
@@ -1232,7 +1345,7 @@ app.post('/s/:shortId', async (req, res) => {
   }
 
   res.redirect(302, record.longUrl);
-  recordDownload(record.owner, shortId);
+  markDownloaded(req, record, shortId);
 });
 
 

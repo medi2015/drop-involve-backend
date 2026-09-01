@@ -188,12 +188,17 @@ const layout = ({ title, body, wide }) => `<!doctype html>
  * getting and who from before committing to it.
  */
 const landingPage = ({
-  shortId, fileName, fileSize, senderEmail, message, expiresAt, hasPassword, error,
+  shortId, fileName, fileSize, senderEmail, message, expiresAt, hasPassword, error, token,
 }) => {
   const type = describeType(fileName);
   const size = formatBytes(fileSize);
   const meta = [size, type].filter(Boolean).join(' · ');
   const expiry = formatDate(expiresAt);
+
+  // Identifies which recipient this is, so the download receipt can name them.
+  // Carried from the emailed link through to the download, since the receipt is
+  // now sent from the download rather than from opening this page.
+  const ref = token ? `?r=${encodeURIComponent(token)}` : '';
 
   return layout({
     title: fileName ? `${fileName}` : 'Fil klar for nedlasting',
@@ -216,14 +221,14 @@ const landingPage = ({
       </div>
 
       ${hasPassword ? `
-        <form method="POST" action="/s/${encodeURIComponent(shortId)}">
+        <form method="POST" action="/s/${encodeURIComponent(shortId)}${ref}">
           <input type="password" name="password" placeholder="Passord" autocomplete="off" autofocus required>
           <button class="btn" type="submit">Åpne og last ned</button>
         </form>
         <p class="fine">Avsenderen har satt et passord. Du skal ha fått det på en
         annen måte enn i e-posten.</p>
       ` : `
-        <a class="btn" href="/s/${encodeURIComponent(shortId)}/d">Last ned filen</a>
+        <a class="btn" href="/s/${encodeURIComponent(shortId)}/d${ref}">Last ned filen</a>
       `}
 
       ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
