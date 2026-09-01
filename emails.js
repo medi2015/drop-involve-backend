@@ -3,135 +3,139 @@ const { escapeHtml } = require('./pages');
 /**
  * Emails sent to recipients.
  *
+ * Follows the same design as the landing page: sand card on dark green, white
+ * inner panel for the file details, yellow download button with a notched icon
+ * chip, Involve wordmark alongside.
+ *
  * Email rendering is stuck in about 2005: inline styles only, tables for
  * layout, solid colours rather than rgba, and no reliance on <style> blocks
- * because Outlook and Gmail strip or mangle them. Everything here is written
- * to that constraint rather than to how the app itself is built.
+ * because Outlook and Gmail strip or mangle them. Everything here is written to
+ * that constraint rather than to how the app is built.
  *
- * Palette matches the app: Mørk grønn #003F46, Sand #F8F5EC, Gul #F5FF8C.
+ * Two deliberate departures from the mockup:
+ *
+ * - Desktop Outlook renders through Word and ignores border-radius, so the card
+ *   is square there. Faking it with VML is fragile and a well-known source of
+ *   broken layouts; everywhere else gets the rounded design.
+ * - The wordmark sits below the card rather than beside it. Side by side needs
+ *   a fixed two-column table, which overflows on a phone — email has no
+ *   reliable way to stack columns.
+ *
+ * Neue Haas Grotesk can't be used: clients strip @font-face, so body text falls
+ * back to Helvetica and Arial. The monospace details survive, because every
+ * client has *some* monospace font and the generic keyword resolves to it.
  */
 
-// These are the app's own surfaces, resolved to solid values.
-//
-// The app layers translucent sand over the dark green — .surface is
-// rgba(248,245,236,0.04), .surface-inset is rgba(22,32,34,0.35) on top of that.
-// Email clients can't be trusted with rgba, so each is pre-composited here.
-// Guessing at them by eye made the email noticeably darker than the app, as if
-// it came from somewhere else.
-const INK = '#003F46';      // page background, same as body
-const CARD = '#0A464D';     // .surface over #003F46
-const INSET = '#0E393E';    // .surface-inset over the card
-const BORDER = '#22585D';   // .surface border over the card
-const SAND = '#F8F5EC';
-const MUTED = '#99AFAC';    // text-sand/60 over the card
-const FAINT = '#819E9C';    // text-sand/50 over the card
-const BRAND = '#F5FF8C';
-const INK_DEEP = '#162022';
+const INK = '#003F46';       // Mørk grønn — page background
+const SAND = '#F8F5EC';      // Sand — the card
+const WHITE = '#FFFFFF';     // The inner panel
+const BRAND = '#F5FF8C';     // Gul — the button
+const INK_DEEP = '#162022';  // Sort — button text
+const MUTED = '#4E7276';     // Labels and fine print, on sand
+const SAND_DIM = '#9FB3B0';  // Fine print on the green background
 
-const FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+const SANS = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+const MONO = "'Andale Mono', Consolas, 'Courier New', monospace";
 
 /** Newlines only survive if turned into markup. Escaped first. */
-const paragraphs = (text) =>
-  escapeHtml(text).replace(/\r?\n/g, '<br>');
+const paragraphs = (text) => escapeHtml(text).replace(/\r?\n/g, '<br>');
+
+const label = (text) => `
+  <p style="margin:0 0 4px; font-family:${MONO}; font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:${MUTED};">${escapeHtml(text)}</p>`;
 
 const layout = ({ preheader, body }) => `<!doctype html>
 <html lang="no">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light">
 </head>
 <body style="margin:0; padding:0; background-color:${INK};">
   <!-- Shown in the inbox preview line, hidden in the message itself. -->
   <div style="display:none; max-height:0; overflow:hidden; opacity:0;">${escapeHtml(preheader)}</div>
 
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${INK}; padding:32px 16px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${INK};">
     <tr>
-      <td align="center">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px; background-color:${CARD}; border:1px solid ${BORDER}; border-radius:16px;">
-          <tr>
-            <td style="padding:32px;">
-
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
-                <tr>
-                  <!-- A PNG, not the SVG: Gmail, Outlook and Apple Mail all
-                       strip SVG. Many clients also block remote images by
-                       default, so the alt text is styled to stand in for it. -->
-                  <td>
-                    <img src="https://drop.involve.no/involve-logo-white.png"
-                         width="118" alt="Involve"
-                         style="display:block; border:0; color:${SAND}; font-family:${FONT}; font-size:17px; font-weight:bold;">
-                  </td>
-                </tr>
-              </table>
-
-              ${body}
-
-            </td>
-          </tr>
+      <td align="center" style="padding:36px 16px 44px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:460px;">
+          ${body}
         </table>
-
-        <p style="margin:20px 0 0; font-family:${FONT}; font-size:12px; color:${FAINT};">
-          Sendt via <a href="https://involve.no" style="color:${FAINT};">Involve</a>
-        </p>
       </td>
     </tr>
   </table>
 </body>
 </html>`;
 
-const detailRow = (label, value) => `
-  <tr>
-    <td style="padding:0 0 10px 0; font-family:${FONT}; font-size:14px; color:${MUTED}; white-space:nowrap; vertical-align:top;">${escapeHtml(label)}</td>
-    <td style="padding:0 0 10px 12px; font-family:${FONT}; font-size:14px; color:${SAND}; word-break:break-word;">${value}</td>
-  </tr>`;
-
 /** The main "someone sent you a file" email. */
 const fileSharedEmail = ({ emailFrom, fileName, message, link, directLink, expiryDays = 7, hasPassword }) =>
   layout({
     preheader: `${fileName} — klar for nedlasting`,
     body: `
-      <h1 style="margin:0 0 6px; font-family:${FONT}; font-size:20px; font-weight:bold; color:${SAND};">Du har fått en fil</h1>
-      <p style="margin:0 0 24px; font-family:${FONT}; font-size:14px; color:${MUTED};">Filen ligger klar og kan lastes ned med knappen under.</p>
+      <tr>
+        <td style="background-color:${SAND}; border-radius:16px; padding:28px 26px 26px;">
 
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${INSET}; border-radius:10px; padding:18px; margin-bottom:24px;">
-        <tr><td style="padding:18px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-            ${detailRow('Fra', `<a href="mailto:${escapeHtml(emailFrom)}" style="color:${BRAND}; text-decoration:none;">${escapeHtml(emailFrom)}</a>`)}
-            ${detailRow('Fil', escapeHtml(fileName))}
-            ${message ? detailRow('Melding', paragraphs(message)) : ''}
+          <p style="margin:0 0 4px; font-family:${SANS}; font-size:15px; color:${INK};">Du har mottatt en fil fra:</p>
+          <p style="margin:0 0 20px; font-family:${SANS}; font-size:21px; font-weight:bold; color:${INK}; word-break:break-word;">
+            <a href="mailto:${escapeHtml(emailFrom)}" style="color:${INK}; text-decoration:none;">${escapeHtml(emailFrom)}</a>
+          </p>
+
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${WHITE}; border-radius:10px;">
+            <tr>
+              <td style="padding:20px 20px 22px;">
+                ${label('Filnavn')}
+                <p style="margin:0 0 ${message ? '18px' : '0'}; font-family:${SANS}; font-size:16px; color:${INK}; word-break:break-word;">${escapeHtml(fileName)}</p>
+                ${message ? `
+                  ${label('Melding')}
+                  <p style="margin:0; font-family:${SANS}; font-size:15px; line-height:1.55; color:${INK};">${paragraphs(message)}</p>
+                ` : ''}
+              </td>
+            </tr>
           </table>
-        </td></tr>
-      </table>
 
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
-        <tr>
-          <td align="center">
-            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-              <tr>
-                <td align="center" bgcolor="${BRAND}" style="border-radius:8px;">
-                  <a href="${link}" style="display:inline-block; padding:14px 32px; font-family:${FONT}; font-size:15px; font-weight:bold; color:${INK_DEEP}; text-decoration:none;">Last ned filen</a>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>
+          <!-- Button and icon chip, split by a notch as in the design. Two
+               cells with a spacer rather than a gap, which Outlook ignores. -->
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:22px;">
+            <tr>
+              <td align="center" bgcolor="${BRAND}" style="border-radius:10px;">
+                <a href="${link}" style="display:block; padding:19px 12px; font-family:${MONO}; font-size:15px; letter-spacing:0.06em; text-transform:uppercase; color:${INK_DEEP}; text-decoration:none;">Last ned filen</a>
+              </td>
+              <td width="5" style="font-size:0; line-height:0;">&nbsp;</td>
+              <td width="62" align="center" bgcolor="${BRAND}" style="border-radius:10px;">
+                <a href="${link}" style="display:block; padding:18px 0;">
+                  <img src="https://drop.involve.no/download-icon.png" width="20" height="20" alt="" style="display:block; margin:0 auto; border:0;">
+                </a>
+              </td>
+            </tr>
+          </table>
 
-      ${hasPassword ? `
-      <p style="margin:0 0 12px; font-family:${FONT}; font-size:13px; color:${BRAND}; text-align:center;">
-        Filen er passordbeskyttet. Passordet sendes ikke på e-post &mdash; ta kontakt
-        med avsenderen for å få det.
-      </p>` : ''}
+          ${hasPassword ? `
+          <p style="margin:16px 0 0; font-family:${SANS}; font-size:12.5px; line-height:1.5; color:${MUTED};">
+            Filen er passordbeskyttet. Passordet sendes ikke på e-post &mdash; ta
+            kontakt med avsenderen for å få det.
+          </p>` : ''}
 
-      <p style="margin:0 0 14px; font-family:${FONT}; font-size:12px; color:${FAINT}; text-align:center;">
-        Lenken slutter å virke etter ${Number(expiryDays)} ${Number(expiryDays) === 1 ? 'dag' : 'dager'}, og filen slettes automatisk.
-      </p>
+          <p style="margin:16px 0 0; font-family:${SANS}; font-size:12.5px; line-height:1.5; color:${MUTED};">
+            Lenken slutter å fungere etter ${Number(expiryDays)} ${Number(expiryDays) === 1 ? 'dag' : 'dager'}.
+            Ta kontakt med avsender dersom du trenger en ny overføring.
+          </p>
+
+        </td>
+      </tr>
+
+      <tr>
+        <td align="right" style="padding:26px 2px 0;">
+          <img src="https://drop.involve.no/involve-wordmark-sand.png"
+               width="150" alt="Involve"
+               style="display:block; border:0; margin-left:auto; color:${SAND}; font-family:${SANS}; font-size:20px; font-weight:bold;">
+        </td>
+      </tr>
 
       ${directLink && !hasPassword ? `
-      <p style="margin:0; font-family:${FONT}; font-size:12px; text-align:center;">
-        <a href="${directLink}" style="color:${SAND};">Hopp over landingsside og last ned direkte</a>
-      </p>` : ''}
+      <tr>
+        <td align="center" style="padding:22px 0 0;">
+          <a href="${directLink}" style="font-family:${SANS}; font-size:12px; color:${SAND_DIM};">Hopp over landingsside og last ned direkte</a>
+        </td>
+      </tr>` : ''}
     `,
   });
 
@@ -140,17 +144,34 @@ const downloadReceiptEmail = ({ fileName, downloader }) =>
   layout({
     preheader: `${fileName} er lastet ned`,
     body: `
-      <h1 style="margin:0 0 6px; font-family:${FONT}; font-size:20px; font-weight:bold; color:${SAND};">Filen er lastet ned</h1>
-      <p style="margin:0 0 24px; font-family:${FONT}; font-size:14px; color:${MUTED};">Mottakeren har hentet filen du sendte.</p>
+      <tr>
+        <td style="background-color:${SAND}; border-radius:16px; padding:28px 26px 26px;">
 
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${INSET}; border-radius:10px;">
-        <tr><td style="padding:18px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-            ${detailRow('Fil', escapeHtml(fileName))}
-            ${downloader ? detailRow('Lastet ned av', escapeHtml(downloader)) : ''}
+          <p style="margin:0 0 20px; font-family:${SANS}; font-size:21px; font-weight:bold; color:${INK};">Filen er lastet ned</p>
+
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${WHITE}; border-radius:10px;">
+            <tr>
+              <td style="padding:20px;">
+                ${label('Filnavn')}
+                <p style="margin:0 0 ${downloader ? '18px' : '0'}; font-family:${SANS}; font-size:16px; color:${INK}; word-break:break-word;">${escapeHtml(fileName)}</p>
+                ${downloader ? `
+                  ${label('Lastet ned av')}
+                  <p style="margin:0; font-family:${SANS}; font-size:16px; color:${INK};">${escapeHtml(downloader)}</p>
+                ` : ''}
+              </td>
+            </tr>
           </table>
-        </td></tr>
-      </table>
+
+        </td>
+      </tr>
+
+      <tr>
+        <td align="right" style="padding:26px 2px 0;">
+          <img src="https://drop.involve.no/involve-wordmark-sand.png"
+               width="150" alt="Involve"
+               style="display:block; border:0; margin-left:auto; color:${SAND}; font-family:${SANS}; font-size:20px; font-weight:bold;">
+        </td>
+      </tr>
     `,
   });
 
