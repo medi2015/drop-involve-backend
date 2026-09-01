@@ -92,6 +92,64 @@ const tooManyAttempts = (shortId) => {
   return false;
 };
 
+// --- Buckets ---------------------------------------------------------------
+//
+// Two buckets, because they need opposite retention.
+//
+// The file bucket carries an 8-day lifecycle rule with a blank prefix, which is
+// right for uploaded files — they're meant to self-delete — but it matched
+// everything else in the bucket too. Session revocation markers were being
+// deleted after 8 days, and a missing marker reads as "nothing was revoked", so
+// a revoked session quietly came back to life for the rest of its 30 days.
+// History and contacts disappeared for anyone who didn't send for a week.
+//
+// The data bucket has no lifecycle rule. Nothing here should ever expire.
+const FILE_BUCKET = process.env.R2_BUCKET_NAME;
+const DATA_BUCKET = process.env.R2_DATA_BUCKET || process.env.R2_BUCKET_NAME;
+
+/**
+ * Reads JSON from the data bucket, falling back to the file bucket.
+ *
+ * The fallback covers the migration: records written before the split still
+ * live in the old bucket, and a link that stopped resolving mid-move would be
+ * a broken download for someone outside Involve. It can be removed once the
+ * old objects have aged out.
+ */
+const readJson = async (key) => {
+  for (const Bucket of DATA_BUCKET === FILE_BUCKET ? [DATA_BUCKET] : [DATA_BUCKET, FILE_BUCKET]) {
+    try {
+      const response = await s3Client.send(new GetObjectCommand({ Bucket, Key: key }));
+      return JSON.parse(await response.Body.transformToString());
+    } catch {
+      // Try the next bucket; a genuine miss returns null below.
+    }
+  }
+  return null;
+};
+
+const writeJson = async (key, value) => {
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: DATA_BUCKET,
+      Key: key,
+      Body: JSON.stringify(value),
+      ContentType: 'application/json',
+    })
+  );
+};
+
+/** Deletes from both buckets — during the migration a key may exist in either. */
+const deleteJson = async (key) => {
+  const buckets = DATA_BUCKET === FILE_BUCKET ? [DATA_BUCKET] : [DATA_BUCKET, FILE_BUCKET];
+  for (const Bucket of buckets) {
+    try {
+      await s3Client.send(new DeleteObjectCommand({ Bucket, Key: key }));
+    } catch (error) {
+      console.warn(`[storage] could not delete ${key} from ${Bucket}:`, error.name);
+    }
+  }
+};
+
 // --- Transfer history -----------------------------------------------------
 // One JSON object per user in R2, keyed on the Google `sub` rather than the
 // email address so it survives someone changing name or role.
@@ -104,15 +162,8 @@ const HISTORY_LIMIT = 100;
 const historyKey = (sub) => `users/${sub}/history.json`;
 
 const readHistory = async (sub) => {
-  try {
-    const response = await s3Client.send(
-      new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: historyKey(sub) })
-    );
-    const parsed = JSON.parse(await response.Body.transformToString());
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return []; // no history yet
-  }
+  const parsed = await readJson(historyKey(sub));
+  return Array.isArray(parsed) ? parsed : []; // no history yet
 };
 
 /**
@@ -146,14 +197,7 @@ const recordDownload = async (owner, shortId) => {
 };
 
 const writeHistory = async (sub, entries) => {
-  await s3Client.send(
-    new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,
-      Key: historyKey(sub),
-      Body: JSON.stringify(entries.slice(0, HISTORY_LIMIT)),
-      ContentType: 'application/json',
-    })
-  );
+  await writeJson(historyKey(sub), entries.slice(0, HISTORY_LIMIT));
 };
 
 // --- Contacts -------------------------------------------------------------
@@ -168,15 +212,8 @@ const CONTACTS_LIMIT = 100;
 const contactsKey = (sub) => `users/${sub}/contacts.json`;
 
 const readContacts = async (sub) => {
-  try {
-    const response = await s3Client.send(
-      new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: contactsKey(sub) })
-    );
-    const parsed = JSON.parse(await response.Body.transformToString());
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  const parsed = await readJson(contactsKey(sub));
+  return Array.isArray(parsed) ? parsed : [];
 };
 
 /** Most recently used first, de-duplicated case-insensitively. */
@@ -195,14 +232,7 @@ const rememberContacts = async (sub, addresses) => {
       merged.push(key);
     }
 
-    await s3Client.send(
-      new PutObjectCommand({
-        Bucket: process.env.R2_BUCKET_NAME,
-        Key: contactsKey(sub),
-        Body: JSON.stringify(merged.slice(0, CONTACTS_LIMIT)),
-        ContentType: 'application/json',
-      })
-    );
+    await writeJson(contactsKey(sub), merged.slice(0, CONTACTS_LIMIT));
   } catch (error) {
     console.warn('[contacts] could not save:', error.name);
   }
@@ -364,14 +394,8 @@ const readRevokedBefore = async (sub) => {
 
   let revokedBefore = 0;
   try {
-    const response = await withTimeout(
-      s3Client.send(
-        new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: securityKey(sub) })
-      ),
-      REVOCATION_TIMEOUT_MS
-    );
-    const parsed = JSON.parse(await response.Body.transformToString());
-    revokedBefore = Number(parsed.revokedBefore) || 0;
+    const parsed = await withTimeout(readJson(securityKey(sub)), REVOCATION_TIMEOUT_MS);
+    revokedBefore = Number(parsed?.revokedBefore) || 0;
   } catch (error) {
     if (error.message === 'timeout') {
       // Don't cache a value we didn't actually read, or a brief blip would
@@ -389,14 +413,7 @@ const readRevokedBefore = async (sub) => {
 const revokeSessionsFor = async (sub) => {
   const revokedBefore = Date.now();
 
-  await s3Client.send(
-    new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,
-      Key: securityKey(sub),
-      Body: JSON.stringify({ revokedBefore }),
-      ContentType: 'application/json',
-    })
-  );
+  await writeJson(securityKey(sub), { revokedBefore });
 
   // Take effect immediately on this instance rather than after the cache TTL.
   revocationCache.set(sub, { revokedBefore, fetchedAt: Date.now() });
@@ -408,28 +425,15 @@ const emailIndexKey = (email) => `index/email/${String(email).toLowerCase()}.jso
 
 const rememberEmailIndex = async (email, sub) => {
   try {
-    await s3Client.send(
-      new PutObjectCommand({
-        Bucket: process.env.R2_BUCKET_NAME,
-        Key: emailIndexKey(email),
-        Body: JSON.stringify({ sub }),
-        ContentType: 'application/json',
-      })
-    );
+    await writeJson(emailIndexKey(email), { sub });
   } catch (error) {
     console.warn('[auth] could not index email:', error.name);
   }
 };
 
 const subForEmail = async (email) => {
-  try {
-    const response = await s3Client.send(
-      new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: emailIndexKey(email) })
-    );
-    return JSON.parse(await response.Body.transformToString()).sub || null;
-  } catch {
-    return null;
-  }
+  const parsed = await readJson(emailIndexKey(email));
+  return parsed?.sub || null;
 };
 
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
@@ -518,7 +522,7 @@ app.post('/generate-upload-url', requireSession, async (req, res) => {
     const objectKey = `${nanoid()}.${fileExtension}`;
 
     const command = new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,
+      Bucket: FILE_BUCKET,
       Key: objectKey,
       ContentType: contentType,
       ContentDisposition: contentDispositionFor(fileName)
@@ -553,7 +557,7 @@ const generateDownloadUrl = async (req, res) => {
     }
 
     const command = new GetObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,
+      Bucket: FILE_BUCKET,
       Key: objectKey,
     });
 
@@ -596,13 +600,7 @@ const generateDownloadUrl = async (req, res) => {
       record.passwordHash = await hashPassword(String(password));
     }
 
-    const putCommand = new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,
-      Key: `short-urls/${shortId}.json`,
-      Body: JSON.stringify(record),
-      ContentType: 'application/json'
-    });
-    await s3Client.send(putCommand);
+    await writeJson(`short-urls/${shortId}.json`, record);
 
     // 4. Return the shortened domain URL back to the client
     const shortUrl = `https://file.involve.no/s/${shortId}`;
@@ -655,7 +653,7 @@ app.post('/multipart/create', requireSession, async (req, res) => {
 
     const { UploadId } = await s3Client.send(
       new CreateMultipartUploadCommand({
-        Bucket: process.env.R2_BUCKET_NAME,
+        Bucket: FILE_BUCKET,
         Key: objectKey,
         ContentType: contentType,
         ContentDisposition: contentDispositionFor(fileName),
@@ -688,7 +686,7 @@ app.post('/multipart/sign', requireSession, async (req, res) => {
         urls[partNumber] = await getSignedUrl(
           s3Client,
           new UploadPartCommand({
-            Bucket: process.env.R2_BUCKET_NAME,
+            Bucket: FILE_BUCKET,
             Key: objectKey,
             UploadId: uploadId,
             PartNumber: Number(partNumber),
@@ -716,7 +714,7 @@ app.post('/multipart/complete', requireSession, async (req, res) => {
 
     await s3Client.send(
       new CompleteMultipartUploadCommand({
-        Bucket: process.env.R2_BUCKET_NAME,
+        Bucket: FILE_BUCKET,
         Key: objectKey,
         UploadId: uploadId,
         MultipartUpload: {
@@ -746,7 +744,7 @@ app.post('/multipart/abort', requireSession, async (req, res) => {
   try {
     await s3Client.send(
       new AbortMultipartUploadCommand({
-        Bucket: process.env.R2_BUCKET_NAME,
+        Bucket: FILE_BUCKET,
         Key: objectKey,
         UploadId: uploadId,
       })
@@ -866,12 +864,7 @@ app.delete('/contacts', requireSession, async (req, res) => {
   if (!req.session.sub) return res.status(403).json({ error: 'Ingen kontakter for denne økten.' });
 
   try {
-    await s3Client.send(
-      new DeleteObjectCommand({
-        Bucket: process.env.R2_BUCKET_NAME,
-        Key: contactsKey(req.session.sub),
-      })
-    );
+    await deleteJson(contactsKey(req.session.sub));
     res.json({ ok: true });
   } catch (error) {
     console.error('Error clearing contacts:', error);
@@ -914,16 +907,18 @@ app.delete('/history/:shortId', requireSession, async (req, res) => {
     }
 
     // Best effort on both: a missing object shouldn't block the rest.
-    const remove = async (Key) => {
-      try {
-        await s3Client.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key }));
-      } catch (error) {
-        console.warn(`[revoke] could not delete ${Key}:`, error.name);
-      }
-    };
+    // The record lives in the data bucket, the file itself in the file bucket.
+    await deleteJson(`short-urls/${shortId}.json`);
 
-    await remove(`short-urls/${shortId}.json`);
-    if (entry.objectKey) await remove(entry.objectKey);
+    if (entry.objectKey) {
+      try {
+        await s3Client.send(
+          new DeleteObjectCommand({ Bucket: FILE_BUCKET, Key: entry.objectKey })
+        );
+      } catch (error) {
+        console.warn(`[revoke] could not delete ${entry.objectKey}:`, error.name);
+      }
+    }
 
     await writeHistory(req.session.sub, entries.filter((item) => item.id !== shortId));
 
@@ -1136,18 +1131,9 @@ app.get('/track-download', async (req, res) => {
  */
 /** Reads a short-link record from R2. Returns null if it's gone. */
 const readShortLink = async (shortId) => {
-  try {
-    const response = await s3Client.send(
-      new GetObjectCommand({
-        Bucket: process.env.R2_BUCKET_NAME,
-        Key: `short-urls/${shortId}.json`,
-      })
-    );
-    return JSON.parse(await response.Body.transformToString());
-  } catch (error) {
-    console.error(`Short link ${shortId} unavailable:`, error.name);
-    return null;
-  }
+  const record = await readJson(`short-urls/${shortId}.json`);
+  if (!record) console.warn(`Short link ${shortId} unavailable`);
+  return record;
 };
 
 /**
