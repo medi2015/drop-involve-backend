@@ -1263,7 +1263,10 @@ app.get('/slides/preview/:id', async (req, res) => {
 /** The current list, including slides that are switched off. */
 app.get('/admin/slides', requireSession, async (req, res) => {
   try {
-    res.json({ slides: await slideStore.load({ force: true }) });
+    const slides = await slideStore.load({ force: true });
+    // The editor sends this back when saving, so a save built on a stale copy
+    // can be refused rather than quietly overwriting someone else's work.
+    res.json({ slides, revision: slideStore.revisionOf(slides) });
   } catch (error) {
     console.error('[slides] read failed:', error);
     res.status(500).json({ error: 'Kunne ikke hente innholdet.' });
@@ -1279,17 +1282,26 @@ app.get('/admin/slides', requireSession, async (req, res) => {
  * edits is a fair trade against the complexity of merging.
  */
 app.put('/admin/slides', requireSession, async (req, res) => {
-  const { slides } = req.body || {};
+  const { slides, revision } = req.body || {};
 
   if (!Array.isArray(slides)) {
     return res.status(400).json({ error: 'Forventet en liste med sider.' });
   }
 
   try {
-    const saved = await slideStore.save(slides, req.session.email);
+    const saved = await slideStore.save(slides, req.session.email, revision);
     console.log(`[slides] ${req.session.email} saved ${saved.length} slide(s)`);
-    res.json({ slides: saved });
+    res.json({ slides: saved, revision: slideStore.revisionOf(saved) });
   } catch (error) {
+    // 409 rather than 500: nothing is broken, the copy being saved is just out
+    // of date. The editor turns this into "reload and try again".
+    if (error.conflict) {
+      console.log(`[slides] ${req.session.email} tried to save a stale list`);
+      return res.status(409).json({
+        error: 'Noen andre har endret innholdet mens du redigerte. Last inn på nytt og prøv igjen.',
+      });
+    }
+
     console.error('[slides] save failed:', error);
     res.status(500).json({ error: 'Kunne ikke lagre innholdet.' });
   }

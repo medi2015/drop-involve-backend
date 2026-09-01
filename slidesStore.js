@@ -11,6 +11,8 @@
  * split in the first place.
  */
 
+const crypto = require('node:crypto');
+
 const SLIDES_KEY = 'slides/index.json';
 
 // Read on every landing-page view, so it can't hit R2 each time. A minute is
@@ -73,9 +75,30 @@ const cleanSlide = (raw = {}, index = 0) => ({
       ? Math.min(Math.max(Number(raw.caseOpacity), 0), 1)
       : undefined,
 
-  updatedAt: Date.now(),
+  // Preserved rather than re-stamped: reading a slide isn't a change, and a
+  // read that altered it would make the revision below differ on every load.
+  updatedAt: Number(raw.updatedAt) || 0,
   updatedBy: text(raw.updatedBy, 120),
 });
+
+/**
+ * A short fingerprint of the saved list.
+ *
+ * Two people editing at once used to mean the last to press save silently
+ * replaced the other's work — no error, the earlier edits simply weren't there.
+ * The editor sends back the revision it loaded, and a mismatch is refused, so
+ * the loser gets told to reload rather than the winner never knowing.
+ *
+ * Content-derived rather than a counter: it survives a restart, needs nothing
+ * stored alongside, and two saves that produce identical content aren't a
+ * conflict worth reporting.
+ */
+const revisionOf = (slides) =>
+  crypto
+    .createHash('sha256')
+    .update(JSON.stringify(slides))
+    .digest('hex')
+    .slice(0, 12);
 
 const createSlideStore = ({ readJson, writeJson, fallback = [] }) => {
   let cache = null;      // { slides, at }
@@ -105,12 +128,26 @@ const createSlideStore = ({ readJson, writeJson, fallback = [] }) => {
     return slides;
   };
 
-  const save = async (rawSlides, editor) => {
+  /**
+   * @param {string} [expectedRevision] the revision the editor loaded. When
+   *        given and stale, the save is refused rather than overwriting.
+   */
+  const save = async (rawSlides, editor, expectedRevision) => {
     if (!Array.isArray(rawSlides)) throw new Error('slides must be an array');
 
+    if (expectedRevision) {
+      // Read through, not from cache: another instance or an earlier save in
+      // this one may have moved things on.
+      const current = await load({ force: true });
+      if (revisionOf(current) !== expectedRevision) {
+        throw Object.assign(new Error('stale'), { conflict: true });
+      }
+    }
+
+    const savedAt = Date.now();
     const slides = rawSlides
       .slice(0, LIMITS.slides)
-      .map((slide, i) => cleanSlide({ ...slide, updatedBy: editor }, i));
+      .map((slide, i) => cleanSlide({ ...slide, updatedBy: editor, updatedAt: savedAt }, i));
 
     await writeJson(SLIDES_KEY, slides);
     cache = { slides, at: Date.now() };
@@ -118,7 +155,7 @@ const createSlideStore = ({ readJson, writeJson, fallback = [] }) => {
     return slides;
   };
 
-  return { load, save, isConfigured: () => configured };
+  return { load, save, revisionOf, isConfigured: () => configured };
 };
 
-module.exports = { createSlideStore, cleanSlide, SLIDES_KEY };
+module.exports = { createSlideStore, cleanSlide, revisionOf, SLIDES_KEY };
