@@ -77,9 +77,26 @@ const verifyPassword = (password, stored) =>
     });
   });
 
-/** Slows down guessing without locking a link permanently. */
+/**
+ * Slows down guessing without locking a link permanently.
+ *
+ * Counted in memory, which assumes a single process. That holds today — pm2
+ * runs this in fork mode with one instance. Switching to cluster mode would
+ * silently divide the limit by the number of workers, and would do the same to
+ * the download de-duplication further down. Neither would raise an error; both
+ * would just quietly stop working as intended.
+ */
 const tooManyAttempts = (shortId) => {
   const now = Date.now();
+
+  // Entries used to accumulate forever: one per protected link ever visited,
+  // never removed. Slow, but unbounded. Sweeping here costs nothing at this
+  // size and keeps the map proportional to current activity.
+  for (const [key, timestamps] of linkAttempts) {
+    const newest = timestamps[timestamps.length - 1] || 0;
+    if (now - newest >= LINK_ATTEMPT_WINDOW_MS) linkAttempts.delete(key);
+  }
+
   const recent = (linkAttempts.get(shortId) || []).filter(
     (t) => now - t < LINK_ATTEMPT_WINDOW_MS
   );

@@ -74,6 +74,17 @@ Everything else was cleared on 1 September, including nodemailer 6 → 9.
 
 ## Product and code
 
+### Do not run pm2 in cluster mode without moving this state out of memory
+Three things are counted in process memory: the password rate limiter
+(`linkAttempts`), the download de-duplication (`recentDownloads`), and the
+slide cache. With one process they're correct. With two, the brute-force limit
+silently doubles, downloads get counted twice, and an edited slide takes up to
+a minute longer to appear on one of the workers.
+
+None of that raises an error — it just quietly stops working as intended. If
+more capacity is ever needed, move the first two into R2 (or Redis) *before*
+adding workers. At ~20 users this is nowhere near necessary.
+
 ### Accessible form labels
 Fields use placeholders with no `<label>`, so a screen reader announces
 nothing useful. Placeholders also vanish once typing starts, which is a
