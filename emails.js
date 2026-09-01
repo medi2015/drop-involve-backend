@@ -17,9 +17,10 @@ const { escapeHtml } = require('./pages');
  * - Desktop Outlook renders through Word and ignores border-radius, so the card
  *   is square there. Faking it with VML is fragile and a well-known source of
  *   broken layouts; everywhere else gets the rounded design.
- * - The wordmark sits below the card rather than beside it. Side by side needs
- *   a fixed two-column table, which overflows on a phone — email has no
- *   reliable way to stack columns.
+ * - The wordmark sits beside the card as in the mockup, using a two-column
+ *   table. Below ~600px a media query stacks them, which most clients honour;
+ *   the ones that don't simply scale the whole message down to fit, which is
+ *   what they already do with any fixed-width email.
  *
  * Neue Haas Grotesk can't be used: clients strip @font-face, so body text falls
  * back to Helvetica and Arial. The monospace details survive, because every
@@ -49,6 +50,16 @@ const layout = ({ preheader, body }) => `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
+<style>
+  /* The only rule that isn't inline. Clients that strip this get the desktop
+     layout scaled to fit, which is what they do with any fixed-width email
+     anyway — so the stacking is an improvement, never a dependency. */
+  @media only screen and (max-width: 600px) {
+    .col       { display: block !important; width: 100% !important; }
+    .wordmark  { padding: 24px 0 0 0 !important; text-align: right !important; }
+    .wordmark img { margin-left: auto !important; width: 130px !important; }
+  }
+</style>
 </head>
 <body style="margin:0; padding:0; background-color:${INK};">
   <!-- Shown in the inbox preview line, hidden in the message itself. -->
@@ -57,7 +68,7 @@ const layout = ({ preheader, body }) => `<!doctype html>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${INK};">
     <tr>
       <td align="center" style="padding:36px 16px 44px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:460px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px;">
           ${body}
         </table>
       </td>
@@ -66,14 +77,40 @@ const layout = ({ preheader, body }) => `<!doctype html>
 </body>
 </html>`;
 
+/**
+ * The card and the wordmark, side by side.
+ *
+ * The wordmark cell is bottom-aligned so the logo sits on the card's baseline
+ * rather than floating beside its middle — that alignment is what makes the
+ * mockup read as one composition instead of two separate objects.
+ */
+const cardWithWordmark = (card) => `
+  <tr>
+    <td>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td class="col" width="430" valign="top" style="width:430px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr><td style="background-color:${SAND}; border-radius:16px; padding:28px 26px 26px;">${card}</td></tr>
+            </table>
+          </td>
+
+          <td class="col wordmark" valign="bottom" align="right" style="padding:0 0 6px 26px;">
+            <img src="https://drop.involve.no/involve-wordmark-sand.png"
+                 width="165" alt="Involve"
+                 style="display:block; border:0; margin-left:auto; color:${SAND}; font-family:${SANS}; font-size:22px; font-weight:bold;">
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>`;
+
 /** The main "someone sent you a file" email. */
 const fileSharedEmail = ({ emailFrom, fileName, message, link, directLink, expiryDays = 7, hasPassword }) =>
   layout({
     preheader: `${fileName} — klar for nedlasting`,
     body: `
-      <tr>
-        <td style="background-color:${SAND}; border-radius:16px; padding:28px 26px 26px;">
-
+      ${cardWithWordmark(`
           <p style="margin:0 0 4px; font-family:${SANS}; font-size:15px; color:${INK};">Du har mottatt en fil fra:</p>
           <p style="margin:0 0 20px; font-family:${SANS}; font-size:21px; font-weight:bold; color:${INK}; word-break:break-word;">
             <a href="mailto:${escapeHtml(emailFrom)}" style="color:${INK}; text-decoration:none;">${escapeHtml(emailFrom)}</a>
@@ -118,21 +155,14 @@ const fileSharedEmail = ({ emailFrom, fileName, message, link, directLink, expir
             Lenken slutter å fungere etter ${Number(expiryDays)} ${Number(expiryDays) === 1 ? 'dag' : 'dager'}.
             Ta kontakt med avsender dersom du trenger en ny overføring.
           </p>
-
-        </td>
-      </tr>
-
-      <tr>
-        <td align="right" style="padding:26px 2px 0;">
-          <img src="https://drop.involve.no/involve-wordmark-sand.png"
-               width="150" alt="Involve"
-               style="display:block; border:0; margin-left:auto; color:${SAND}; font-family:${SANS}; font-size:20px; font-weight:bold;">
-        </td>
-      </tr>
+      `)}
 
       ${directLink && !hasPassword ? `
       <tr>
-        <td align="center" style="padding:22px 0 0;">
+        <!-- Left-aligned to the card's edge rather than centred under the full
+             width, where it floated between the card and the wordmark with no
+             relationship to either. -->
+        <td align="left" style="padding:20px 0 0 2px;">
           <a href="${directLink}" style="font-family:${SANS}; font-size:12px; color:${SAND_DIM};">Hopp over landingsside og last ned direkte</a>
         </td>
       </tr>` : ''}
@@ -144,9 +174,7 @@ const downloadReceiptEmail = ({ fileName, downloader }) =>
   layout({
     preheader: `${fileName} er lastet ned`,
     body: `
-      <tr>
-        <td style="background-color:${SAND}; border-radius:16px; padding:28px 26px 26px;">
-
+      ${cardWithWordmark(`
           <p style="margin:0 0 20px; font-family:${SANS}; font-size:21px; font-weight:bold; color:${INK};">Filen er lastet ned</p>
 
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${WHITE}; border-radius:10px;">
@@ -161,17 +189,7 @@ const downloadReceiptEmail = ({ fileName, downloader }) =>
               </td>
             </tr>
           </table>
-
-        </td>
-      </tr>
-
-      <tr>
-        <td align="right" style="padding:26px 2px 0;">
-          <img src="https://drop.involve.no/involve-wordmark-sand.png"
-               width="150" alt="Involve"
-               style="display:block; border:0; margin-left:auto; color:${SAND}; font-family:${SANS}; font-size:20px; font-weight:bold;">
-        </td>
-      </tr>
+      `)}
     `,
   });
 
