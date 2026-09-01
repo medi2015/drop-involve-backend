@@ -59,13 +59,16 @@ pm2 restart drop-backend --update-env
 pm2 logs drop-backend --lines 20 --nostream
 ```
 
-### Review npm audit
-Two high-severity findings on the server. Read them before acting —
-`npm audit fix` can bump Express across a major version and break routing.
+### Two remaining npm audit findings, both unreachable
+`uuid` before 11.1.1, pulled in through `gaxios` by `google-auth-library`.
+Moderate: a missing buffer bounds check in uuid v3/v5/v6, but only when a
+`buf` argument is passed — which nothing in our sign-in path does.
 
-```bash
-cd /var/www/drop-involve-backend && npm audit
-```
+Fixing it needs `google-auth-library` 10.x, a major bump on the code that
+verifies Google sign-in. Not worth it for an advisory we can't reach. Revisit
+when that library is being upgraded for some other reason.
+
+Everything else was cleared on 1 September, including nodemailer 6 → 9.
 
 ---
 
