@@ -25,15 +25,12 @@ So:
 
 ## Operational
 
-### Remove the old-bucket read fallback
-`readJson` in `server/index.js` reads the data bucket, then falls back to the
-file bucket. That fallback existed only to cover the migration on 1 September
-and is now dead weight — an extra R2 round trip on every genuine miss.
+### DONE — Remove the old-bucket read fallback
+`readJson` and `deleteJson` in `server/index.js` now strictly query `R2_DATA_BUCKET`.
+The fallback to the file bucket has been removed. Remember to delete the leftover
+`users/`, `short-urls/` and `index/` copies in `get-involve` if needed (the lifecycle
+rule will have removed them anyway).
 
-Safe to delete once everything has been rewritten to the new bucket, so from
-around 10 September. Delete the `users/`, `short-urls/` and `index/` copies
-left behind in `get-involve` at the same time; the lifecycle rule will have
-removed them anyway.
 
 ### Never put a lifecycle rule on the data bucket
 `involve-drop-data` holds history, contacts, session revocation markers,
@@ -91,7 +88,26 @@ nothing useful. Placeholders also vanish once typing starts, which is a
 problem for anyone who loses their place. Applies to: Send til, Din melding,
 Utløper om, Passord på lenken.
 
-### Stream the zip instead of building it in memory
+### DONE 4 September — the zip is streamed
+Kept here because the reasoning still applies to anything similar.
+
+`JSZip.generateAsync({ type: 'blob' })` built the whole archive as one buffer,
+and V8 refuses any single allocation over ~2.1 GB — 96 photos totalling 2.1 GB
+failed with `RangeError: Array buffer allocation failed` after several minutes.
+
+Now `client/src/lib/zipUpload.js` produces the zip as a stream, collects it into
+16 MB parts and uploads each as it fills. Peak memory is roughly 3 parts. The
+archive no longer exists in memory at all, so batch size stopped mattering.
+
+Zipping moved from drop time to send time as a consequence: the archive can't be
+built without uploading it. Dropping files is now instant.
+
+Verified in Node against real archives: streamed output is byte-identical to
+`generateAsync`, and every entry unpacks intact — across many small files, a
+single file spanning parts, empty files, deep paths, Norwegian filenames, and
+the case where the total is an exact multiple of the part size.
+
+### The old plan, for reference
 `JSZip.generateAsync({ type: 'blob' })` materialises the whole archive before a
 single byte is uploaded, so a folder starts failing somewhere around 1–2 GB
 depending on the machine. The upload itself is already streamed — this is

@@ -124,26 +124,18 @@ const tooManyAttempts = (shortId) => {
 //
 // The data bucket has no lifecycle rule. Nothing here should ever expire.
 const FILE_BUCKET = process.env.R2_BUCKET_NAME;
-const DATA_BUCKET = process.env.R2_DATA_BUCKET || process.env.R2_BUCKET_NAME;
+const DATA_BUCKET = process.env.R2_DATA_BUCKET;
 
 /**
- * Reads JSON from the data bucket, falling back to the file bucket.
- *
- * The fallback covers the migration: records written before the split still
- * live in the old bucket, and a link that stopped resolving mid-move would be
- * a broken download for someone outside Involve. It can be removed once the
- * old objects have aged out.
+ * Reads JSON from the data bucket.
  */
 const readJson = async (key) => {
-  for (const Bucket of DATA_BUCKET === FILE_BUCKET ? [DATA_BUCKET] : [DATA_BUCKET, FILE_BUCKET]) {
-    try {
-      const response = await s3Client.send(new GetObjectCommand({ Bucket, Key: key }));
-      return JSON.parse(await response.Body.transformToString());
-    } catch {
-      // Try the next bucket; a genuine miss returns null below.
-    }
+  try {
+    const response = await s3Client.send(new GetObjectCommand({ Bucket: DATA_BUCKET, Key: key }));
+    return JSON.parse(await response.Body.transformToString());
+  } catch {
+    return null;
   }
-  return null;
 };
 
 const writeJson = async (key, value) => {
@@ -157,15 +149,12 @@ const writeJson = async (key, value) => {
   );
 };
 
-/** Deletes from both buckets — during the migration a key may exist in either. */
+/** Deletes from the data bucket. */
 const deleteJson = async (key) => {
-  const buckets = DATA_BUCKET === FILE_BUCKET ? [DATA_BUCKET] : [DATA_BUCKET, FILE_BUCKET];
-  for (const Bucket of buckets) {
-    try {
-      await s3Client.send(new DeleteObjectCommand({ Bucket, Key: key }));
-    } catch (error) {
-      console.warn(`[storage] could not delete ${key} from ${Bucket}:`, error.name);
-    }
+  try {
+    await s3Client.send(new DeleteObjectCommand({ Bucket: DATA_BUCKET, Key: key }));
+  } catch (error) {
+    console.warn(`[storage] could not delete ${key} from ${DATA_BUCKET}:`, error.name);
   }
 };
 
@@ -533,6 +522,41 @@ async function requireSession(req, res, next) {
   req.session = session;
   return next();
 }
+
+/**
+ * Checks whether an email is permitted to edit landing-page slides.
+ *
+ * Fail-open: if CONTENT_EDITORS is unset or empty, all authenticated
+ * @involve.no users are allowed to edit. When set, only emails in the
+ * comma-separated list have access.
+ */
+function canEditContent(email) {
+  if (!email || typeof email !== 'string') return false;
+
+  const editors = (process.env.CONTENT_EDITORS || '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (editors.length === 0) return true;
+  return editors.includes(email.trim().toLowerCase());
+}
+
+function requireContentEditor(req, res, next) {
+  if (!canEditContent(req.session?.email)) {
+    return res.status(403).json({ error: 'Du har ikke tilgang til å redigere innhold.' });
+  }
+  return next();
+}
+
+/** Current user profile and permissions. */
+app.get('/me', requireSession, (req, res) => {
+  const email = req.session?.email || '';
+  res.json({
+    email,
+    canEditContent: canEditContent(email),
+  });
+});
 
 /**
  * Generate a Presigned URL for uploading a file (PUT)
@@ -1278,7 +1302,7 @@ app.get('/slides/preview/:id', async (req, res) => {
 });
 
 /** The current list, including slides that are switched off. */
-app.get('/admin/slides', requireSession, async (req, res) => {
+app.get('/admin/slides', requireSession, requireContentEditor, async (req, res) => {
   try {
     const slides = await slideStore.load({ force: true });
     // The editor sends this back when saving, so a save built on a stale copy
@@ -1298,7 +1322,7 @@ app.get('/admin/slides', requireSession, async (req, res) => {
  * simultaneous save would mean last-one-wins, which for a handful of monthly
  * edits is a fair trade against the complexity of merging.
  */
-app.put('/admin/slides', requireSession, async (req, res) => {
+app.put('/admin/slides', requireSession, requireContentEditor, async (req, res) => {
   const { slides, revision } = req.body || {};
 
   if (!Array.isArray(slides)) {
@@ -1335,6 +1359,7 @@ app.put('/admin/slides', requireSession, async (req, res) => {
 app.post(
   '/admin/slides/media',
   requireSession,
+  requireContentEditor,
   express.raw({ type: Object.keys(MEDIA_TYPES), limit: '6mb' }),
   async (req, res) => {
     const buffer = req.body;
@@ -1626,15 +1651,32 @@ app.use((err, req, res, next) => {
 });
 
 // Start the server (always goes at the bottom)
-app.listen(PORT, async () => {
-  console.log(`Server running on port ${PORT}`);
+if (require.main === module) {
+  app.listen(PORT, async () => {
+    console.log(`Server running on port ${PORT}`);
 
-  // Check the mail transport now rather than discovering a bad password the
-  // first time somebody asks for a code.
-  const mail = await verifyTransport();
-  console.log(
-    mail.ok
-      ? `[mail] transport ready (${mail.detail})`
-      : `[mail] TRANSPORT FAILED (${backend}): ${mail.detail}`
-  );
-});
+    // Check the mail transport now rather than discovering a bad password the
+    // first time somebody asks for a code.
+    const mail = await verifyTransport();
+    console.log(
+      mail.ok
+        ? `[mail] transport ready (${mail.detail})`
+        : `[mail] TRANSPORT FAILED (${backend}): ${mail.detail}`
+    );
+  });
+}
+
+module.exports = {
+  app,
+  canEditContent,
+  requireContentEditor,
+  readJson,
+  writeJson,
+  deleteJson,
+  get DATA_BUCKET() {
+    return process.env.R2_DATA_BUCKET;
+  },
+  get FILE_BUCKET() {
+    return FILE_BUCKET;
+  },
+};
