@@ -366,7 +366,7 @@ const CSS = `
     color: var(--case-text, ${SAND});
   }
 
-  .case-media { flex: 0 0 42%; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+  .case-media { flex: 0 0 38%; padding: 22px 16px 22px 22px; display: flex; flex-direction: column; gap: 12px; }
 
   .case-thumb {
     width: 100%;
@@ -377,11 +377,23 @@ const CSS = `
     background-position: center;
   }
 
+  .case-byline { display: flex; flex-direction: column; gap: 3px; }
+  .case-name  { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.25; }
+  .case-role  {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    opacity: 0.85;
+  }
+
   /* Slide card CTA button and icon chip, split by a notch matching the download action. */
   .case-cta {
     display: flex;
     gap: 4px;
     text-decoration: none;
+    margin-top: 18px;
   }
   .case-cta:hover { filter: brightness(1.25); }
 
@@ -416,10 +428,10 @@ const CSS = `
     line-height: 1;
   }
 
-  .case-body { flex: 1; padding: 26px 26px 26px 8px; display: flex; flex-direction: column; }
+  .case-body { flex: 1; padding: 22px 22px 22px 12px; display: flex; flex-direction: column; }
 
   .case-kicker {
-    margin: 0 0 16px;
+    margin: 0 0 10px;
     font-family: var(--mono);
     font-size: 12px;
     letter-spacing: 0.08em;
@@ -429,27 +441,21 @@ const CSS = `
 
   .case-title { margin: 0 0 12px; font-size: 20px; font-weight: 700; line-height: 1.25; }
   .case-text  { margin: 0 0 auto; font-size: 14.5px; line-height: 1.55; opacity: 0.92; }
-  .case-name  { margin: 22px 0 0; font-size: 17px; font-weight: 700; }
-  .case-role  {
-    margin: 2px 0 0;
-    font-family: var(--mono);
-    font-size: 12px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    opacity: 0.85;
-  }
 
   /* --- Tagline variant (the flat yellow page) ----------------------------- */
 
   .tagline {
-    max-width: 760px;
+    max-width: 540px;
     margin: -6px 0 0;
     font-family: var(--display);
-    font-size: clamp(34px, 4.6vw, 68px);
+    font-size: clamp(38px, 3.2vw, 46px);
     font-weight: 400;
-    line-height: 1.1;
+    line-height: 1.12;
     letter-spacing: -0.015em;
     color: var(--tagline-color, ${INK});
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   /* --- Wordmark ----------------------------------------------------------- */
@@ -504,14 +510,28 @@ const CSS = `
     min-height: 400px;
   }
 
-  .carousel-slide .tagline {
+  /* Text-only / statement slide layout */
+  .carousel-slide.slide-text {
+    justify-content: center;
+  }
+
+  .carousel-slide .tagline,
+  .slide-text .tagline {
     flex: 1;
     display: flex;
     align-items: center;
+    max-width: 540px;
     margin: 0;
     min-height: 400px;
-    font-size: clamp(22px, 2.2vw, 32px);
-    line-height: 1.25;
+    font-family: var(--display);
+    font-size: clamp(38px, 3.2vw, 46px);
+    font-weight: 400;
+    line-height: 1.12;
+    letter-spacing: -0.015em;
+    color: var(--tagline-color, ${INK});
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .carousel-nav {
@@ -765,19 +785,23 @@ const caseCard = (slide) => {
     <div class="case">
       <div class="case-media">
         <div class="case-thumb" ${thumb}></div>
-        ${slide.ctaUrl ? `
-          <a class="case-cta" href="${safeUrl(slide.ctaUrl)}" target="_blank" rel="noopener noreferrer">
-            <span class="case-cta-label">${escapeHtml(slide.ctaLabel || 'Les mer')}</span>
-            <span class="case-cta-icon" aria-hidden="true">+</span>
-          </a>
+        ${slide.personName || slide.personRole ? `
+          <div class="case-byline">
+            ${slide.personName ? `<p class="case-name">${escapeHtml(slide.personName)}</p>` : ''}
+            ${slide.personRole ? `<p class="case-role">${escapeHtml(slide.personRole)}</p>` : ''}
+          </div>
         ` : ''}
       </div>
       <div class="case-body">
         ${slide.kicker ? `<p class="case-kicker"${slide.kickerColor || slide.tagColor ? ` style="color:${safeColor(slide.kickerColor || slide.tagColor, '')};"` : ''}>${escapeHtml(slide.kicker)}</p>` : ''}
         <h2 class="case-title">${escapeHtml(slide.title)}</h2>
         <p class="case-text">${escapeHtml(slide.body || '')}</p>
-        ${slide.personName ? `<p class="case-name">${escapeHtml(slide.personName)}</p>` : ''}
-        ${slide.personRole ? `<p class="case-role">${escapeHtml(slide.personRole)}</p>` : ''}
+        ${slide.ctaUrl ? `
+          <a class="case-cta" href="${safeUrl(slide.ctaUrl)}" target="_blank" rel="noopener noreferrer">
+            <span class="case-cta-label">${escapeHtml(slide.ctaLabel || 'Les mer')}</span>
+            <span class="case-cta-icon" aria-hidden="true">+</span>
+          </a>
+        ` : ''}
       </div>
     </div>`;
 };
@@ -860,7 +884,7 @@ const landingPage = ({
       const navColor = isLight ? '#062022' : BRAND;
 
       return `
-        <div class="carousel-slide ${index === 0 ? 'active' : ''}"
+        <div class="carousel-slide ${index === 0 ? 'active' : ''} ${s.tagline ? 'slide-text' : 'slide-card'}"
           data-index="${index}"
           data-bg="${safeUrl(s.backgroundUrl)}"
           data-page-color="${safeColor(s.pageColor, BRAND)}"
