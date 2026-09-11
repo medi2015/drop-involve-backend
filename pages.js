@@ -366,7 +366,7 @@ const CSS = `
     color: var(--case-text, ${SAND});
   }
 
-  .case-media { flex: 0 0 42%; padding: 22px; display: flex; flex-direction: column; justify-content: space-between; gap: 16px; }
+  .case-media { flex: 0 0 42%; padding: 22px 14px 22px 22px; display: flex; flex-direction: column; gap: 20px; box-sizing: border-box; }
 
   .case-thumb {
     width: 100%;
@@ -382,7 +382,8 @@ const CSS = `
     display: flex;
     gap: 4px;
     text-decoration: none;
-    margin-top: auto;
+    height: 44px;
+    box-sizing: border-box;
   }
   .case-cta:hover { filter: brightness(1.25); }
 
@@ -393,7 +394,7 @@ const CSS = `
     align-items: center;
     justify-content: center;
     text-align: center;
-    padding: 13px 14px;
+    padding: 0 14px;
     border-radius: 8px;
     background: var(--cta-bg, ${CTA_COLOR});
     color: ${BRAND};
@@ -401,6 +402,7 @@ const CSS = `
     font-size: 12.5px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
+    box-sizing: border-box;
   }
 
   .case-cta span:last-child,
@@ -415,13 +417,14 @@ const CSS = `
     font-family: var(--mono);
     font-size: 24px;
     line-height: 1;
+    box-sizing: border-box;
   }
 
-  .case-body { flex: 1; padding: 24px 26px 22px 14px; display: flex; flex-direction: column; justify-content: space-between; }
+  .case-body { flex: 1; padding: 22px 22px 22px 14px; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }
   .case-content { display: flex; flex-direction: column; }
 
   .case-kicker {
-    margin: 0 0 10px;
+    margin: 0 0 8px;
     font-family: var(--mono);
     font-size: 12px;
     letter-spacing: 0.08em;
@@ -429,11 +432,19 @@ const CSS = `
     color: var(--kicker-color, rgba(248, 245, 236, 0.85));
   }
 
-  .case-title { margin: 0 0 12px; font-size: 20px; font-weight: 700; line-height: 1.25; }
-  .case-text  { margin: 0; font-size: 14.5px; line-height: 1.55; opacity: 0.92; }
+  .case-title { margin: 0 0 10px; font-size: 19px; font-weight: 700; line-height: 1.25; }
+  .case-text  { margin: 0; font-size: 14px; line-height: 1.5; opacity: 0.92; }
 
-  .case-byline { margin-top: auto; padding-top: 14px; display: flex; flex-direction: column; gap: 3px; }
-  .case-name  { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.25; }
+  .case-byline {
+    height: 44px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    margin-top: auto;
+    box-sizing: border-box;
+  }
+  .case-name  { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.2; }
   .case-role  {
     margin: 0;
     font-family: var(--mono);
@@ -484,12 +495,12 @@ const CSS = `
   .carousel-slides {
     position: relative;
     width: 100%;
-    min-height: 400px;
+    min-height: 350px;
   }
 
   .carousel-slide {
     width: 100%;
-    min-height: 400px;
+    min-height: 350px;
     display: flex;
     flex-direction: column;
     transition: opacity 0.25s ease;
@@ -506,9 +517,7 @@ const CSS = `
   }
 
   .carousel-slide .case {
-    flex: 1;
     width: 100%;
-    min-height: 400px;
   }
 
   /* Text-only / statement slide layout */
@@ -523,7 +532,7 @@ const CSS = `
     align-items: center;
     max-width: 540px;
     margin: 0;
-    min-height: 400px;
+    min-height: 350px;
     font-family: var(--display);
     font-size: clamp(38px, 3.2vw, 46px);
     font-weight: 400;
