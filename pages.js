@@ -91,7 +91,7 @@ const withAlpha = (hex, alpha) => {
 // The wordmark, inlined: no extra request, sharp at any size. Drawn at the
 // bottom of the page at a size that deliberately runs off the edge.
 const WORDMARK = `<svg viewBox="0 0 1080 286" role="img" aria-label="Involve" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMax meet">
-<g fill="currentColor">
+<g fill="#062022">
 <polygon points="440.7 86 392.4 86 345.3 198.2 298.8 86 250.6 86 335.7 279.1 355.6 279.1 440.7 86"/>
 <polygon points="892.5 86 843.6 86 796.6 198.2 750.1 86 701.2 86 786.9 279.1 806.8 279.1 892.5 86"/>
 <path d="M528.6,82.9c-50.9,0-92,29.4-92,99.3s41.1,99.3,92,99.3,92-29.4,92-99.3-41.1-99.3-92-99.3ZM528.6,244.8c-26.4,0-47.2-18.4-47.2-62.5s21.5-62.5,47.2-62.5,47.2,18.4,47.2,62.5-21.5,62.5-47.2,62.5Z"/>
@@ -102,6 +102,20 @@ const WORDMARK = `<svg viewBox="0 0 1080 286" role="img" aria-label="Involve" xm
 </g></svg>`;
 
 const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+
+const CHEVRON_LEFT = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>`;
+const CHEVRON_RIGHT = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>`;
+
+const isLightColor = (hex) => {
+  const match = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!match) return false;
+  let val = match[1];
+  if (val.length === 3) val = val.split('').map((c) => c + c).join('');
+  const r = parseInt(val.slice(0, 2), 16);
+  const g = parseInt(val.slice(2, 4), 16);
+  const b = parseInt(val.slice(4, 6), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 160;
+};
 
 const formatBytes = (bytes) => {
   const size = Number(bytes);
@@ -363,23 +377,44 @@ const CSS = `
     background-position: center;
   }
 
+  /* Slide card CTA button and icon chip, split by a notch matching the download action. */
   .case-cta {
     display: flex;
+    gap: 4px;
+    text-decoration: none;
+  }
+  .case-cta:hover { filter: brightness(1.25); }
+
+  .case-cta span:first-child,
+  .case-cta-label {
+    flex: 1;
+    display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 14px 18px;
+    justify-content: center;
+    text-align: center;
+    padding: 14px 16px;
     border-radius: 8px;
     background: var(--cta-bg, ${CTA_COLOR});
-    color: var(--case-text, ${SAND});
+    color: ${BRAND};
     font-family: var(--mono);
     font-size: 13px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    text-decoration: none;
   }
-  .case-cta:hover { filter: brightness(1.25); }
-  .case-cta span:last-child { color: ${BRAND}; font-size: 18px; line-height: 1; }
+
+  .case-cta span:last-child,
+  .case-cta-icon {
+    flex: 0 0 46px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: var(--cta-bg, ${CTA_COLOR});
+    color: ${BRAND};
+    font-family: var(--mono);
+    font-size: 24px;
+    line-height: 1;
+  }
 
   .case-body { flex: 1; padding: 26px 26px 26px 8px; display: flex; flex-direction: column; }
 
@@ -389,8 +424,7 @@ const CSS = `
     font-size: 12px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: ${SAND};
-    opacity: 0.85;
+    color: var(--kicker-color, rgba(248, 245, 236, 0.85));
   }
 
   .case-title { margin: 0 0 12px; font-size: 20px; font-weight: 700; line-height: 1.25; }
@@ -425,11 +459,133 @@ const CSS = `
     margin: 40px 0 0;
     margin-left: clamp(-20px, -2vw, 0px);
     height: clamp(120px, 19vw, 260px);
-    color: var(--wordmark-color, ${INK_DEEP});
-    opacity: var(--wordmark-opacity, 1);
+    color: #062022;
+    opacity: 1;
     pointer-events: none;
   }
-  .wordmark svg { height: 100%; width: auto; display: block; }
+  .wordmark svg { height: 100%; width: auto; display: block; fill: #062022; }
+
+  /* --- Carousel & Indicator Dots ------------------------------------------ */
+
+  .carousel-area {
+    flex: 1;
+    max-width: 660px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .carousel-slides {
+    position: relative;
+    width: 100%;
+    min-height: 400px;
+  }
+
+  .carousel-slide {
+    width: 100%;
+    min-height: 400px;
+    display: flex;
+    flex-direction: column;
+    transition: opacity 0.25s ease;
+  }
+
+  .carousel-slide:not(.active) {
+    display: none;
+    opacity: 0;
+  }
+
+  .carousel-slide.active {
+    display: flex;
+    opacity: 1;
+  }
+
+  .carousel-slide .case {
+    flex: 1;
+    width: 100%;
+    min-height: 400px;
+  }
+
+  .carousel-slide .tagline {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    margin: 0;
+    min-height: 400px;
+    font-size: clamp(22px, 2.2vw, 32px);
+    line-height: 1.25;
+  }
+
+  .carousel-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 18px;
+    padding-left: 2px;
+  }
+
+  .carousel-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--nav-color, ${BRAND});
+    cursor: pointer;
+    opacity: 0.65;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+
+  .carousel-arrow:hover {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+
+  .carousel-dots {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .carousel-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    border: 1.5px solid var(--nav-color, ${BRAND});
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    position: relative;
+    opacity: 0.55;
+    transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                background 0.2s ease,
+                border-color 0.2s ease,
+                opacity 0.2s ease;
+  }
+
+  /* Extended hit target for touch accessibility */
+  .carousel-dot::before {
+    content: "";
+    position: absolute;
+    inset: -8px;
+  }
+
+  .carousel-dot:hover {
+    opacity: 0.9;
+    transform: scale(1.15);
+  }
+
+  .carousel-dot.active {
+    width: 24px;
+    height: 8px;
+    background: var(--nav-color, ${BRAND});
+    border-color: var(--nav-color, ${BRAND});
+    opacity: 1;
+    cursor: default;
+    transform: none;
+  }
 
   @media (max-width: 900px) {
     /* The case card is dropped on phones rather than stacked: it's promotional,
@@ -437,11 +593,11 @@ const CSS = `
        yellow variant so there's no background photo to download either. */
     .backdrop { display: none; }
     body { background: ${BRAND}; }
-    .case, .tagline { display: none; }
+    .case, .tagline, .carousel-area { display: none; }
     .stage { padding: 28px 20px 0; }
     .panels { display: block; }
     .card { max-width: none; }
-    .wordmark { color: ${INK_DEEP}; opacity: 1; height: clamp(90px, 26vw, 150px); }
+    .wordmark { color: #062022; opacity: 1; height: clamp(90px, 26vw, 150px); }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -449,11 +605,109 @@ const CSS = `
   }
 `;
 
+const CAROUSEL_SCRIPT = `
+<script>
+(function() {
+  var area = document.querySelector('.carousel-area');
+  if (!area) return;
+  var slides = area.querySelectorAll('.carousel-slide');
+  var dots = area.querySelectorAll('.carousel-dot');
+  if (slides.length <= 1) return;
+
+  var prevBtn = area.querySelector('.carousel-prev');
+  var nextBtn = area.querySelector('.carousel-next');
+  var backdrop = document.querySelector('.backdrop');
+  var current = 0;
+
+  function show(index) {
+    if (index < 0 || index >= slides.length || index === current) return;
+    slides[current].classList.remove('active');
+    slides[current].style.display = 'none';
+    if (dots[current]) {
+      dots[current].classList.remove('active');
+      dots[current].removeAttribute('aria-current');
+    }
+
+    current = index;
+    var next = slides[current];
+    next.style.display = 'flex';
+    void next.offsetWidth;
+    next.classList.add('active');
+    if (dots[current]) {
+      dots[current].classList.add('active');
+      dots[current].setAttribute('aria-current', 'true');
+    }
+
+    var bg = next.getAttribute('data-bg');
+    if (bg) {
+      if (!backdrop) {
+        backdrop = document.createElement('div');
+        backdrop.className = 'backdrop';
+        document.body.insertBefore(backdrop, document.body.firstChild);
+      }
+      backdrop.style.backgroundImage = "url('" + bg + "')";
+      backdrop.style.display = 'block';
+    } else if (backdrop) {
+      backdrop.style.display = 'none';
+    }
+
+    var pageColor = next.getAttribute('data-page-color');
+    if (pageColor) document.body.style.setProperty('--stage-bg', pageColor);
+    var caseColor = next.getAttribute('data-case-color');
+    if (caseColor) document.body.style.setProperty('--case-bg', caseColor);
+    var ctaBg = next.getAttribute('data-cta-bg');
+    if (ctaBg) document.body.style.setProperty('--cta-bg', ctaBg);
+    var caseText = next.getAttribute('data-case-text');
+    if (caseText) document.body.style.setProperty('--case-text', caseText);
+    var kickerColor = next.getAttribute('data-kicker-color');
+    if (kickerColor) document.body.style.setProperty('--kicker-color', kickerColor);
+    var taglineColor = next.getAttribute('data-tagline-color');
+    if (taglineColor) document.body.style.setProperty('--tagline-color', taglineColor);
+    var navColor = next.getAttribute('data-nav-color');
+    if (navColor) document.body.style.setProperty('--nav-color', navColor);
+  }
+
+  dots.forEach(function(dot, i) {
+    dot.addEventListener('click', function() { show(i); });
+  });
+
+  if (prevBtn) {
+    prevBtn.addEventListener('click', function() {
+      show((current - 1 + slides.length) % slides.length);
+    });
+  }
+
+  if (nextBtn) {
+    nextBtn.addEventListener('click', function() {
+      show((current + 1) % slides.length);
+    });
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    if (e.key === 'ArrowRight') show((current + 1) % slides.length);
+    if (e.key === 'ArrowLeft') show((current - 1 + slides.length) % slides.length);
+  });
+
+  var startX = 0;
+  area.addEventListener('touchstart', function(e) {
+    if (e.changedTouches && e.changedTouches[0]) startX = e.changedTouches[0].screenX;
+  }, {passive: true});
+
+  area.addEventListener('touchend', function(e) {
+    if (!e.changedTouches || !e.changedTouches[0]) return;
+    var diff = e.changedTouches[0].screenX - startX;
+    if (diff < -40) show((current + 1) % slides.length);
+    if (diff > 40) show((current - 1 + slides.length) % slides.length);
+  }, {passive: true});
+})();
+</script>`;
+
 /**
  * @param {object} slide  see slides.js — may be null, in which case the page
  *                        falls back to the flat yellow tagline variant.
  */
-const layout = ({ title, body, slide }) => {
+const layout = ({ title, body, slide, navColor = BRAND, hasCarousel = false }) => {
   const background = slide?.backgroundUrl
     ? `<div class="backdrop" style="background-image:url('${safeUrl(slide.backgroundUrl)}')"></div>`
     : '';
@@ -461,9 +715,6 @@ const layout = ({ title, body, slide }) => {
   // Every colour is overridable per slide, so a slide can be tuned to its own
   // photograph without a deploy. Anything left unset falls back to the brand
   // default in the stylesheet.
-  //
-  // Without a photo behind it the wordmark needs to sit back, or it fights the
-  // cards for attention. Over a photo it's already knocked back by the dimming.
   const opacity = Number(slide?.caseOpacity);
   const stageStyle = [
     `--stage-bg:${safeColor(slide?.pageColor, BRAND)}`,
@@ -473,8 +724,9 @@ const layout = ({ title, body, slide }) => {
     )}`,
     `--cta-bg:${safeColor(slide?.ctaColor, CTA_COLOR)}`,
     `--case-text:${safeColor(slide?.caseTextColor, SAND)}`,
+    `--kicker-color:${safeColor(slide?.kickerColor || slide?.tagColor, '')}`,
     `--tagline-color:${safeColor(slide?.taglineColor, INK)}`,
-    slide?.backgroundUrl ? `--wordmark-color:${INK};--wordmark-opacity:0.85` : '',
+    `--nav-color:${navColor}`,
   ].filter(Boolean).join(';');
 
   return `<!doctype html>
@@ -496,6 +748,7 @@ ${FONTS}
     </div>
     <div class="wordmark">${WORDMARK}</div>
   </div>
+  ${hasCarousel ? CAROUSEL_SCRIPT : ''}
 </body>
 </html>`;
 };
@@ -514,13 +767,13 @@ const caseCard = (slide) => {
         <div class="case-thumb" ${thumb}></div>
         ${slide.ctaUrl ? `
           <a class="case-cta" href="${safeUrl(slide.ctaUrl)}" target="_blank" rel="noopener noreferrer">
-            <span>${escapeHtml(slide.ctaLabel || 'Les mer')}</span>
-            <span aria-hidden="true">+</span>
+            <span class="case-cta-label">${escapeHtml(slide.ctaLabel || 'Les mer')}</span>
+            <span class="case-cta-icon" aria-hidden="true">+</span>
           </a>
         ` : ''}
       </div>
       <div class="case-body">
-        ${slide.kicker ? `<p class="case-kicker">${escapeHtml(slide.kicker)}</p>` : ''}
+        ${slide.kicker ? `<p class="case-kicker"${slide.kickerColor || slide.tagColor ? ` style="color:${safeColor(slide.kickerColor || slide.tagColor, '')};"` : ''}>${escapeHtml(slide.kicker)}</p>` : ''}
         <h2 class="case-title">${escapeHtml(slide.title)}</h2>
         <p class="case-text">${escapeHtml(slide.body || '')}</p>
         ${slide.personName ? `<p class="case-name">${escapeHtml(slide.personName)}</p>` : ''}
@@ -535,7 +788,7 @@ const caseCard = (slide) => {
  * getting and who from before committing to it.
  */
 const landingPage = ({
-  shortId, fileName, fileSize, senderEmail, message, expiresAt, hasPassword, error, token, slide,
+  shortId, fileName, fileSize, senderEmail, message, expiresAt, hasPassword, error, token, slide, slides,
 }) => {
   const type = describeType(fileName);
   const size = formatBytes(fileSize);
@@ -589,14 +842,76 @@ const landingPage = ({
       ${expiry ? `<p class="fine">Lenken utløper ${escapeHtml(expiry)}. Filen slettes automatisk etterpå.</p>` : ''}
     </div>`;
 
-  // The flat variant has no case card; it carries the agency tagline instead.
-  const right = slide?.tagline
-    ? `<p class="tagline">${escapeHtml(slide.tagline)}</p>`
-    : caseCard(slide);
+  const slideList = Array.isArray(slides) && slides.length > 0
+    ? slides
+    : (slide ? [slide] : []);
+
+  let right = '';
+  if (slideList.length === 1) {
+    const s = slideList[0];
+    right = s.tagline ? `<p class="tagline">${escapeHtml(s.tagline)}</p>` : caseCard(s);
+  } else if (slideList.length > 1) {
+    const slideItems = slideList.map((s, index) => {
+      const content = s.tagline
+        ? `<p class="tagline">${escapeHtml(s.tagline)}</p>`
+        : caseCard(s);
+      const opacity = Number(s.caseOpacity);
+      const isLight = !s.backgroundUrl && isLightColor(s.pageColor || (s.tagline ? BRAND : INK));
+      const navColor = isLight ? '#062022' : BRAND;
+
+      return `
+        <div class="carousel-slide ${index === 0 ? 'active' : ''}"
+          data-index="${index}"
+          data-bg="${safeUrl(s.backgroundUrl)}"
+          data-page-color="${safeColor(s.pageColor, BRAND)}"
+          data-case-color="${withAlpha(
+            safeColor(s.caseColor, CASE_CARD),
+            Number.isFinite(opacity) ? opacity : CASE_OPACITY
+          )}"
+          data-cta-bg="${safeColor(s.ctaColor, CTA_COLOR)}"
+          data-case-text="${safeColor(s.caseTextColor, SAND)}"
+          data-kicker-color="${safeColor(s.kickerColor || s.tagColor, '')}"
+          data-tagline-color="${safeColor(s.taglineColor, INK)}"
+          data-nav-color="${navColor}"
+          ${index === 0 ? '' : 'style="display:none;"'}
+        >
+          ${content}
+        </div>`;
+    }).join('');
+
+    const nav = `
+      <nav class="carousel-nav" aria-label="Slide-navigasjon">
+        <button type="button" class="carousel-arrow carousel-prev" aria-label="Forrige slide" title="Forrige slide">
+          ${CHEVRON_LEFT}
+        </button>
+        <div class="carousel-dots">
+          ${slideList.map((_, index) => `
+            <button type="button" class="carousel-dot ${index === 0 ? 'active' : ''}" data-index="${index}" aria-label="Slide ${index + 1}" ${index === 0 ? 'aria-current="true"' : ''}></button>
+          `).join('')}
+        </div>
+        <button type="button" class="carousel-arrow carousel-next" aria-label="Neste slide" title="Neste slide">
+          ${CHEVRON_RIGHT}
+        </button>
+      </nav>`;
+
+    right = `
+      <div class="carousel-area">
+        <div class="carousel-slides">
+          ${slideItems}
+        </div>
+        ${nav}
+      </div>`;
+  }
+
+  const initialSlide = slideList[0] || null;
+  const initialIsLight = !initialSlide?.backgroundUrl && isLightColor(initialSlide?.pageColor || (initialSlide?.tagline ? BRAND : INK));
+  const initialNavColor = initialIsLight ? '#062022' : BRAND;
 
   return layout({
     title: fileName || 'Fil klar for nedlasting',
-    slide,
+    slide: initialSlide,
+    navColor: initialNavColor,
+    hasCarousel: slideList.length > 1,
     body: `${card}${right}`,
   });
 };

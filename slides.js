@@ -125,6 +125,17 @@ const pickSlide = (slides = PLACEHOLDER_SLIDES) => {
   }
 };
 
+const enabledSlides = (slides = PLACEHOLDER_SLIDES) => {
+  try {
+    return (Array.isArray(slides) ? slides : []).filter(
+      (slide) => slide && slide.enabled !== false
+    );
+  } catch (error) {
+    console.warn('[slides] could not filter enabled slides:', error.message);
+    return [];
+  }
+};
+
 /**
  * Renders with a slide, and without one if that fails.
  *
@@ -146,4 +157,4 @@ const renderWithSlide = (render, slide) => {
   return render(null);
 };
 
-module.exports = { PLACEHOLDER_SLIDES, pickSlide, renderWithSlide };
+module.exports = { PLACEHOLDER_SLIDES, pickSlide, enabledSlides, renderWithSlide };

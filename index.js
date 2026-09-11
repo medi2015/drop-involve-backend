@@ -17,7 +17,7 @@ const { nanoid } = require('nanoid');
 const { OAuth2Client } = require('google-auth-library');
 const { sendMail, verifyTransport, backend } = require('./mailer');
 const { landingPage, expiredPage, errorPage } = require('./pages');
-const { PLACEHOLDER_SLIDES, pickSlide, renderWithSlide } = require('./slides');
+const { PLACEHOLDER_SLIDES, pickSlide, enabledSlides, renderWithSlide } = require('./slides');
 const { createSlideStore } = require('./slidesStore');
 const { fileSharedEmail, downloadReceiptEmail } = require('./emails');
 
@@ -1273,9 +1273,10 @@ app.get('/slides/media/:name', async (req, res) => {
  */
 app.get('/slides/preview/:id', async (req, res) => {
   const slides = await slideStore.load();
+  const allEnabled = enabledSlides(slides);
   const slide = slides.find((item) => item.id === req.params.id);
 
-  if (!slide) {
+  if (!slide && req.params.id !== 'all') {
     return res.status(404).type('html').send(
       errorPage({
         title: 'Fant ikke siden',
@@ -1284,20 +1285,21 @@ app.get('/slides/preview/:id', async (req, res) => {
     );
   }
 
+  // If a specific slide is requested, put it first so the carousel opens on it
+  const previewSlides = slide
+    ? [slide, ...allEnabled.filter((item) => item.id !== slide.id)]
+    : allEnabled;
+
   res.type('html').send(
-    renderWithSlide(
-      (active) =>
-        landingPage({
-          shortId: 'forhandsvisning',
-          fileName: 'Eksempelfil_Korr02.pdf',
-          fileSize: 24_500_000,
-          senderEmail: 'navn@involve.no',
-          message: 'Slik ser en melding fra avsenderen ut på denne siden.',
-          expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
-          slide: active,
-        }),
-      slide
-    )
+    landingPage({
+      shortId: 'forhandsvisning',
+      fileName: 'Eksempelfil_Korr02.pdf',
+      fileSize: 24_500_000,
+      senderEmail: 'navn@involve.no',
+      message: 'Slik ser en melding fra avsenderen ut på denne siden.',
+      expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      slides: previewSlides,
+    })
   );
 });
 
@@ -1509,22 +1511,19 @@ app.get('/s/:shortId', async (req, res) => {
   // Viewing the page is not downloading — the count happens on /d below, or
   // when a password is accepted. Otherwise opening the link twice out of
   // curiosity would read as two downloads.
+  const allSlides = await slideStore.load();
   res.type('html').send(
-    renderWithSlide(
-      (slide) =>
-        landingPage({
-          shortId,
-          fileName: record.fileName,
-          fileSize: record.fileSize,
-          senderEmail: record.senderEmail,
-          message: record.message,
-          expiresAt: record.expiresAt,
-          hasPassword: Boolean(record.passwordHash),
-          token: typeof req.query.r === 'string' ? req.query.r : null,
-          slide,
-        }),
-      pickSlide(await slideStore.load())
-    )
+    landingPage({
+      shortId,
+      fileName: record.fileName,
+      fileSize: record.fileSize,
+      senderEmail: record.senderEmail,
+      message: record.message,
+      expiresAt: record.expiresAt,
+      hasPassword: Boolean(record.passwordHash),
+      token: typeof req.query.r === 'string' ? req.query.r : null,
+      slides: enabledSlides(allSlides),
+    })
   );
 });
 
@@ -1562,27 +1561,23 @@ app.post('/s/:shortId', async (req, res) => {
 
   // Loaded once rather than per render: this handler can render the page
   // several times over a wrong password, and re-picking each time would flip
-  // the showcase around while someone is typing.
   const slides = await slideStore.load();
+  const activeSlides = enabledSlides(slides);
 
   const page = (error, status) =>
     res.status(status).type('html').send(
-      renderWithSlide(
-        (slide) =>
-          landingPage({
-            shortId,
-            fileName: record.fileName,
-            fileSize: record.fileSize,
-            senderEmail: record.senderEmail,
-            message: record.message,
-            expiresAt: record.expiresAt,
-            hasPassword: true,
-            error,
-            token: typeof req.query.r === 'string' ? req.query.r : null,
-            slide,
-          }),
-        pickSlide(slides)
-      )
+      landingPage({
+        shortId,
+        fileName: record.fileName,
+        fileSize: record.fileSize,
+        senderEmail: record.senderEmail,
+        message: record.message,
+        expiresAt: record.expiresAt,
+        hasPassword: true,
+        error,
+        token: typeof req.query.r === 'string' ? req.query.r : null,
+        slides: activeSlides,
+      })
     );
 
   if (!record.passwordHash) {

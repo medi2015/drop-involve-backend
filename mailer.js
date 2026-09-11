@@ -57,9 +57,11 @@ if (useSmtp) {
       : undefined,
   });
   console.log(`[mail] using SMTP via ${process.env.SMTP_HOST}`);
-} else {
+} else if (process.env.RESEND_API_KEY) {
   resend = new Resend(process.env.RESEND_API_KEY);
   console.log('[mail] using Resend');
+} else {
+  console.warn('[mail] warning: no SMTP_HOST or RESEND_API_KEY configured');
 }
 
 /**
@@ -74,6 +76,10 @@ async function sendMail({ from, to, replyTo, subject, html }) {
     } catch (error) {
       return { error };
     }
+  }
+
+  if (!resend) {
+    return { error: new Error('Mail transport not configured') };
   }
 
   const { error } = await resend.emails.send({
@@ -92,7 +98,12 @@ async function sendMail({ from, to, replyTo, subject, html }) {
  * startup: a bad password otherwise only surfaces when a user requests a code.
  */
 async function verifyTransport() {
-  if (!useSmtp) return { ok: true, detail: 'resend (no connection check)' };
+  if (!useSmtp) {
+    return {
+      ok: Boolean(resend),
+      detail: resend ? 'resend (no connection check)' : 'resend (not configured)',
+    };
+  }
 
   try {
     await transporter.verify();

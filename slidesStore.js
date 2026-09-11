@@ -69,6 +69,7 @@ const cleanSlide = (raw = {}, index = 0) => ({
   caseColor: text(raw.caseColor, LIMITS.colour),
   ctaColor: text(raw.ctaColor, LIMITS.colour),
   caseTextColor: text(raw.caseTextColor, LIMITS.colour),
+  kickerColor: text(raw.kickerColor || raw.tagColor || raw.categoryColor, LIMITS.colour),
   taglineColor: text(raw.taglineColor, LIMITS.colour),
   caseOpacity:
     Number.isFinite(Number(raw.caseOpacity))
