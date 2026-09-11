@@ -37,6 +37,19 @@ const LIMITS = {
   id: 64,
 };
 
+// Defaults matching client/src/components/ContentAdmin.jsx and server/pages.js
+const DEFAULT_KICKER_COLOR = '#F5FF8C';
+
+const DEFAULTS = {
+  pageColor: '#003F46',
+  caseColor: '#0B1416',
+  ctaColor: '#003F48',
+  caseTextColor: '#F8F5EC',
+  kickerColor: DEFAULT_KICKER_COLOR,
+  taglineColor: '#003F46',
+  caseOpacity: 0.75,
+};
+
 const text = (value, max) =>
   typeof value === 'string' ? value.trim().slice(0, max) : '';
 
@@ -159,4 +172,11 @@ const createSlideStore = ({ readJson, writeJson, fallback = [] }) => {
   return { load, save, revisionOf, isConfigured: () => configured };
 };
 
-module.exports = { createSlideStore, cleanSlide, revisionOf, SLIDES_KEY };
+module.exports = {
+  createSlideStore,
+  cleanSlide,
+  revisionOf,
+  SLIDES_KEY,
+  DEFAULTS,
+  DEFAULT_KICKER_COLOR,
+};

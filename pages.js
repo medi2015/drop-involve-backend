@@ -429,7 +429,7 @@ const CSS = `
     font-size: 12px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--kicker-color, rgba(248, 245, 236, 0.85));
+    color: var(--kicker-color, #F5FF8C);
   }
 
   .case-title { margin: 0 0 10px; font-size: 19px; font-weight: 700; line-height: 1.25; }
@@ -754,7 +754,7 @@ const layout = ({ title, body, slide, navColor = BRAND, hasCarousel = false }) =
     )}`,
     `--cta-bg:${safeColor(slide?.ctaColor, CTA_COLOR)}`,
     `--case-text:${safeColor(slide?.caseTextColor, SAND)}`,
-    `--kicker-color:${safeColor(slide?.kickerColor || slide?.tagColor, '')}`,
+    `--kicker-color:${safeColor(slide?.kickerColor || slide?.tagColor, BRAND)}`,
     `--tagline-color:${safeColor(slide?.taglineColor, INK)}`,
     `--nav-color:${navColor}`,
   ].filter(Boolean).join(';');
@@ -906,7 +906,7 @@ const landingPage = ({
           )}"
           data-cta-bg="${safeColor(s.ctaColor, CTA_COLOR)}"
           data-case-text="${safeColor(s.caseTextColor, SAND)}"
-          data-kicker-color="${safeColor(s.kickerColor || s.tagColor, '')}"
+          data-kicker-color="${safeColor(s.kickerColor || s.tagColor, BRAND)}"
           data-tagline-color="${safeColor(s.taglineColor, INK)}"
           data-nav-color="${navColor}"
           ${index === 0 ? '' : 'style="display:none;"'}
