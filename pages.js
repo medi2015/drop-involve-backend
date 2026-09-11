@@ -366,7 +366,7 @@ const CSS = `
     color: var(--case-text, ${SAND});
   }
 
-  .case-media { flex: 0 0 38%; padding: 22px 16px 22px 22px; display: flex; flex-direction: column; gap: 12px; }
+  .case-media { flex: 0 0 42%; padding: 22px; display: flex; flex-direction: column; justify-content: space-between; gap: 16px; }
 
   .case-thumb {
     width: 100%;
@@ -377,23 +377,12 @@ const CSS = `
     background-position: center;
   }
 
-  .case-byline { display: flex; flex-direction: column; gap: 3px; }
-  .case-name  { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.25; }
-  .case-role  {
-    margin: 0;
-    font-family: var(--mono);
-    font-size: 11px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    opacity: 0.85;
-  }
-
   /* Slide card CTA button and icon chip, split by a notch matching the download action. */
   .case-cta {
     display: flex;
     gap: 4px;
     text-decoration: none;
-    margin-top: 18px;
+    margin-top: auto;
   }
   .case-cta:hover { filter: brightness(1.25); }
 
@@ -404,19 +393,19 @@ const CSS = `
     align-items: center;
     justify-content: center;
     text-align: center;
-    padding: 14px 16px;
+    padding: 13px 14px;
     border-radius: 8px;
     background: var(--cta-bg, ${CTA_COLOR});
     color: ${BRAND};
     font-family: var(--mono);
-    font-size: 13px;
+    font-size: 12.5px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
   .case-cta span:last-child,
   .case-cta-icon {
-    flex: 0 0 46px;
+    flex: 0 0 44px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -428,7 +417,8 @@ const CSS = `
     line-height: 1;
   }
 
-  .case-body { flex: 1; padding: 22px 22px 22px 12px; display: flex; flex-direction: column; }
+  .case-body { flex: 1; padding: 24px 26px 22px 14px; display: flex; flex-direction: column; justify-content: space-between; }
+  .case-content { display: flex; flex-direction: column; }
 
   .case-kicker {
     margin: 0 0 10px;
@@ -440,7 +430,18 @@ const CSS = `
   }
 
   .case-title { margin: 0 0 12px; font-size: 20px; font-weight: 700; line-height: 1.25; }
-  .case-text  { margin: 0 0 auto; font-size: 14.5px; line-height: 1.55; opacity: 0.92; }
+  .case-text  { margin: 0; font-size: 14.5px; line-height: 1.55; opacity: 0.92; }
+
+  .case-byline { margin-top: auto; padding-top: 14px; display: flex; flex-direction: column; gap: 3px; }
+  .case-name  { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.25; }
+  .case-role  {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    opacity: 0.85;
+  }
 
   /* --- Tagline variant (the flat yellow page) ----------------------------- */
 
@@ -785,22 +786,24 @@ const caseCard = (slide) => {
     <div class="case">
       <div class="case-media">
         <div class="case-thumb" ${thumb}></div>
-        ${slide.personName || slide.personRole ? `
-          <div class="case-byline">
-            ${slide.personName ? `<p class="case-name">${escapeHtml(slide.personName)}</p>` : ''}
-            ${slide.personRole ? `<p class="case-role">${escapeHtml(slide.personRole)}</p>` : ''}
-          </div>
-        ` : ''}
-      </div>
-      <div class="case-body">
-        ${slide.kicker ? `<p class="case-kicker"${slide.kickerColor || slide.tagColor ? ` style="color:${safeColor(slide.kickerColor || slide.tagColor, '')};"` : ''}>${escapeHtml(slide.kicker)}</p>` : ''}
-        <h2 class="case-title">${escapeHtml(slide.title)}</h2>
-        <p class="case-text">${escapeHtml(slide.body || '')}</p>
         ${slide.ctaUrl ? `
           <a class="case-cta" href="${safeUrl(slide.ctaUrl)}" target="_blank" rel="noopener noreferrer">
             <span class="case-cta-label">${escapeHtml(slide.ctaLabel || 'Les mer')}</span>
             <span class="case-cta-icon" aria-hidden="true">+</span>
           </a>
+        ` : ''}
+      </div>
+      <div class="case-body">
+        <div class="case-content">
+          ${slide.kicker ? `<p class="case-kicker"${slide.kickerColor || slide.tagColor ? ` style="color:${safeColor(slide.kickerColor || slide.tagColor, '')};"` : ''}>${escapeHtml(slide.kicker)}</p>` : ''}
+          <h2 class="case-title">${escapeHtml(slide.title)}</h2>
+          <p class="case-text">${escapeHtml(slide.body || '')}</p>
+        </div>
+        ${slide.personName || slide.personRole ? `
+          <div class="case-byline">
+            ${slide.personName ? `<p class="case-name">${escapeHtml(slide.personName)}</p>` : ''}
+            ${slide.personRole ? `<p class="case-role">${escapeHtml(slide.personRole)}</p>` : ''}
+          </div>
         ` : ''}
       </div>
     </div>`;
