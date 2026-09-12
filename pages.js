@@ -421,18 +421,19 @@ const CSS = `
   }
 
   .case-body { flex: 1; padding: 22px 22px 22px 14px; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; }
-  .case-content { display: flex; flex-direction: column; }
+  .case-content { display: flex; flex-direction: column; gap: 10px; }
 
   .case-kicker {
-    margin: 0 0 8px;
+    margin: 0;
     font-family: var(--mono);
     font-size: 12px;
+    line-height: 1.2;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--kicker-color, #F5FF8C);
   }
 
-  .case-title { margin: 0 0 10px; font-size: 19px; font-weight: 700; line-height: 1.25; }
+  .case-title { margin: 0; font-size: 19px; font-weight: 700; line-height: 1.25; }
   .case-text  { margin: 0; font-size: 14px; line-height: 1.5; opacity: 0.92; }
 
   .case-byline {
