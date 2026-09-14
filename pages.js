@@ -648,15 +648,24 @@ const CAROUSEL_SCRIPT = `
   var prevBtn = area.querySelector('.carousel-prev');
   var nextBtn = area.querySelector('.carousel-next');
   var backdrop = document.querySelector('.backdrop');
-  var current = 0;
+  var current = -1;
+
+  for (var i = 0; i < slides.length; i++) {
+    if (slides[i].classList.contains('active')) {
+      current = i;
+      break;
+    }
+  }
 
   function show(index) {
     if (index < 0 || index >= slides.length || index === current) return;
-    slides[current].classList.remove('active');
-    slides[current].style.display = 'none';
-    if (dots[current]) {
-      dots[current].classList.remove('active');
-      dots[current].removeAttribute('aria-current');
+    if (current >= 0 && slides[current]) {
+      slides[current].classList.remove('active');
+      slides[current].style.display = 'none';
+      if (dots[current]) {
+        dots[current].classList.remove('active');
+        dots[current].removeAttribute('aria-current');
+      }
     }
 
     current = index;
@@ -696,6 +705,10 @@ const CAROUSEL_SCRIPT = `
     if (taglineColor) document.body.style.setProperty('--tagline-color', taglineColor);
     var navColor = next.getAttribute('data-nav-color');
     if (navColor) document.body.style.setProperty('--nav-color', navColor);
+  }
+
+  if (current === -1) {
+    show(Math.floor(Math.random() * slides.length));
   }
 
   dots.forEach(function(dot, i) {
@@ -825,7 +838,7 @@ const caseCard = (slide) => {
  * getting and who from before committing to it.
  */
 const landingPage = ({
-  shortId, fileName, fileSize, senderEmail, message, expiresAt, hasPassword, error, token, slide, slides,
+  shortId, fileName, fileSize, senderEmail, message, expiresAt, hasPassword, error, token, slide, slides, initialIndex,
 }) => {
   const type = describeType(fileName);
   const size = formatBytes(fileSize);
@@ -883,6 +896,14 @@ const landingPage = ({
     ? slides
     : (slide ? [slide] : []);
 
+  const startIndex = slideList.length > 1
+    ? ((typeof initialIndex === 'number' && initialIndex >= 0 && initialIndex < slideList.length)
+        ? initialIndex
+        : (slide && slideList.findIndex((s) => s.id === slide.id) !== -1
+            ? slideList.findIndex((s) => s.id === slide.id)
+            : Math.floor(Math.random() * slideList.length)))
+    : 0;
+
   let right = '';
   if (slideList.length === 1) {
     const s = slideList[0];
@@ -897,7 +918,7 @@ const landingPage = ({
       const navColor = isLight ? '#062022' : BRAND;
 
       return `
-        <div class="carousel-slide ${index === 0 ? 'active' : ''} ${s.tagline ? 'slide-text' : 'slide-card'}"
+        <div class="carousel-slide ${index === startIndex ? 'active' : ''} ${s.tagline ? 'slide-text' : 'slide-card'}"
           data-index="${index}"
           data-bg="${safeUrl(s.backgroundUrl)}"
           data-page-color="${safeColor(s.pageColor, BRAND)}"
@@ -910,7 +931,7 @@ const landingPage = ({
           data-kicker-color="${safeColor(s.kickerColor || s.tagColor, BRAND)}"
           data-tagline-color="${safeColor(s.taglineColor, INK)}"
           data-nav-color="${navColor}"
-          ${index === 0 ? '' : 'style="display:none;"'}
+          ${index === startIndex ? '' : 'style="display:none;"'}
         >
           ${content}
         </div>`;
@@ -923,7 +944,7 @@ const landingPage = ({
         </button>
         <div class="carousel-dots">
           ${slideList.map((_, index) => `
-            <button type="button" class="carousel-dot ${index === 0 ? 'active' : ''}" data-index="${index}" aria-label="Slide ${index + 1}" ${index === 0 ? 'aria-current="true"' : ''}></button>
+            <button type="button" class="carousel-dot ${index === startIndex ? 'active' : ''}" data-index="${index}" aria-label="Slide ${index + 1}" ${index === startIndex ? 'aria-current="true"' : ''}></button>
           `).join('')}
         </div>
         <button type="button" class="carousel-arrow carousel-next" aria-label="Neste slide" title="Neste slide">
@@ -940,7 +961,7 @@ const landingPage = ({
       </div>`;
   }
 
-  const initialSlide = slideList[0] || null;
+  const initialSlide = slideList[startIndex] || null;
   const initialIsLight = !initialSlide?.backgroundUrl && isLightColor(initialSlide?.pageColor || (initialSlide?.tagline ? BRAND : INK));
   const initialNavColor = initialIsLight ? '#062022' : BRAND;
 
