@@ -245,15 +245,22 @@ const CSS = `
 
   .eyebrow {
     margin: 0 0 40px;
+    padding: 0 24px;
     font-family: var(--mono);
     font-size: 13px;
     letter-spacing: 0.02em;
     color: ${INK};
   }
 
-  .from-label { margin: 0 0 4px; font-size: 15px; color: ${INK}; }
+  .from-label {
+    margin: 0 0 4px;
+    padding: 0 24px;
+    font-size: 15px;
+    color: ${INK};
+  }
   .from {
     margin: 0 0 22px;
+    padding: 0 24px;
     font-size: 21px;
     font-weight: 700;
     color: ${INK};
