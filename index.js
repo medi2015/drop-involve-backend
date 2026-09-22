@@ -216,6 +216,28 @@ const writeHistory = async (sub, entries) => {
   await writeJson(historyKey(sub), entries.slice(0, HISTORY_LIMIT));
 };
 
+/** Records or updates the recipient email on a history entry. */
+const recordRecipient = async (sub, shortId, recipient) => {
+  if (!sub || !shortId || !recipient) return;
+
+  try {
+    const entries = await readHistory(sub);
+    let changed = false;
+    const clean = String(recipient).slice(0, 500);
+
+    const updated = entries.map((entry) => {
+      if (entry.id !== shortId) return entry;
+      if (entry.recipientEmail === clean) return entry;
+      changed = true;
+      return { ...entry, recipientEmail: clean };
+    });
+
+    if (changed) await writeHistory(sub, updated);
+  } catch (error) {
+    console.warn(`[history] could not record recipient for ${shortId}:`, error.name);
+  }
+};
+
 // --- Contacts -------------------------------------------------------------
 // Addresses this user has sent to before, so they don't retype them. Captured
 // server-side because /send-email already has the recipient list, and stored
@@ -601,7 +623,8 @@ app.post('/generate-upload-url', requireSession, async (req, res) => {
 const generateDownloadUrl = async (req, res) => {
   try {
     const source = req.method === 'POST' ? req.body : req.query;
-    const { objectKey, expiresIn, password, fileName, fileSize, message } = source || {};
+    const { objectKey, expiresIn, password, fileName, fileSize, message, recipientEmail, emailTo } = source || {};
+    const recipient = recipientEmail || emailTo || null;
 
     if (!objectKey) {
       return res.status(400).json({ error: 'objectKey is required' });
@@ -635,6 +658,7 @@ const generateDownloadUrl = async (req, res) => {
       longUrl,
       owner: req.session?.sub || null,
       senderEmail: req.session?.email || null,
+      recipientEmail: recipient ? String(recipient).slice(0, 500) : null,
       fileName: fileName ? String(fileName).slice(0, 200) : null,
       fileSize: Number(fileSize) || null,
       message: message ? String(message).slice(0, 1000) : null,
@@ -665,6 +689,7 @@ const generateDownloadUrl = async (req, res) => {
         url: shortUrl,
         objectKey,
         hasPassword: Boolean(password),
+        recipientEmail: recipient ? String(recipient).slice(0, 500) : null,
         createdAt: Date.now(),
         expiresAt: Date.now() + expirySeconds * 1000,
       };
@@ -1112,27 +1137,32 @@ app.post('/send-email', requireSession, async (req, res) => {
   const shortId = String(downloadUrl || '').match(/\/s\/([^/?#]+)/)?.[1] || null;
   const tokens = new Map(); // recipient -> token
 
-  if (requireReceipt && shortId) {
-    for (const recipient of recipientList) tokens.set(recipient, nanoid(10));
+  if (recipientList.length > 0 && shortId && req.session?.sub) {
+    recordRecipient(req.session.sub, shortId, recipientList.join(', '));
+  }
 
+  if (shortId) {
     try {
       const key = `short-urls/${shortId}.json`;
       const record = await readJson(key);
 
       if (record) {
-        record.notify = {
-          sender: emailFrom,
-          // Merged rather than replaced: the same link can be sent onward to
-          // more people later, and the earlier tokens are already in inboxes.
-          recipients: {
-            ...(record.notify?.recipients || {}),
-            ...Object.fromEntries([...tokens].map(([email, token]) => [token, email])),
-          },
-        };
+        if (!record.recipientEmail && recipientList.length > 0) {
+          record.recipientEmail = recipientList.join(', ');
+        }
+        if (requireReceipt) {
+          for (const recipient of recipientList) tokens.set(recipient, nanoid(10));
+          record.notify = {
+            sender: emailFrom,
+            recipients: {
+              ...(record.notify?.recipients || {}),
+              ...Object.fromEntries([...tokens].map(([email, token]) => [token, email])),
+            },
+          };
+        }
         await writeJson(key, record);
       }
     } catch (error) {
-      // A receipt is worth less than the file arriving. Send anyway.
       console.warn(`[receipts] could not attach to ${shortId}:`, error.name);
       tokens.clear();
     }
