@@ -955,7 +955,38 @@ app.get('/history', requireSession, async (req, res) => {
   if (!req.session.sub) return res.json({ items: [] });
 
   try {
-    res.json({ items: await readHistory(req.session.sub) });
+    const items = await readHistory(req.session.sub);
+
+    // Auto-backfill recipient emails from short-url records for older transfers
+    let backfilled = false;
+    await Promise.all(
+      items.slice(0, 20).map(async (item) => {
+        if (item.recipientEmail) return;
+        try {
+          const record = await readJson(`short-urls/${item.id}.json`);
+          if (!record) return;
+          let found = record.recipientEmail;
+          if (!found && record.notify?.recipients) {
+            const list = Array.from(new Set(Object.values(record.notify.recipients)));
+            if (list.length > 0) found = list.join(', ');
+          }
+          if (found) {
+            item.recipientEmail = String(found).slice(0, 500);
+            backfilled = true;
+          }
+        } catch {
+          // ignore lookup errors
+        }
+      })
+    );
+
+    if (backfilled) {
+      writeHistory(req.session.sub, items).catch((err) =>
+        console.warn('[history] backfill write error:', err.name)
+      );
+    }
+
+    res.json({ items });
   } catch (error) {
     console.error('Error reading history:', error);
     res.status(500).json({ error: 'Kunne ikke hente historikk.' });
