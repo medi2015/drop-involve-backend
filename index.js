@@ -174,12 +174,43 @@ const slideStore = createSlideStore({
 // Storing recipients would turn this into a record of correspondence, which is
 // personal data with a retention obligation attached.
 const HISTORY_LIMIT = 100;
+// Retain history entries for at most 14 days after their link expiry date
+const RETENTION_AFTER_EXPIRY_MS = 14 * 24 * 60 * 60 * 1000;
+
+const isHistoryEntryCurrent = (entry, now = Date.now()) => {
+  const expiresAt = entry.expiresAt || (entry.createdAt ? entry.createdAt + 7 * 24 * 60 * 60 * 1000 : 0);
+  if (!expiresAt) return true;
+  return now <= expiresAt + RETENTION_AFTER_EXPIRY_MS;
+};
 
 const historyKey = (sub) => `users/${sub}/history.json`;
 
 const readHistory = async (sub) => {
   const parsed = await readJson(historyKey(sub));
-  return Array.isArray(parsed) ? parsed : []; // no history yet
+  const entries = Array.isArray(parsed) ? parsed : [];
+  const now = Date.now();
+  const current = [];
+  const expired = [];
+
+  for (const entry of entries) {
+    if (isHistoryEntryCurrent(entry, now)) {
+      current.push(entry);
+    } else {
+      expired.push(entry);
+    }
+  }
+
+  // Prune expired entries from R2 storage and clean up their short-urls records
+  if (expired.length > 0) {
+    writeJson(historyKey(sub), current.slice(0, HISTORY_LIMIT)).catch((err) =>
+      console.warn(`[history] failed to prune expired entries for ${sub}:`, err.name)
+    );
+    for (const item of expired) {
+      if (item.id) deleteJson(`short-urls/${item.id}.json`).catch(() => {});
+    }
+  }
+
+  return current;
 };
 
 /**
@@ -213,7 +244,9 @@ const recordDownload = async (owner, shortId) => {
 };
 
 const writeHistory = async (sub, entries) => {
-  await writeJson(historyKey(sub), entries.slice(0, HISTORY_LIMIT));
+  const now = Date.now();
+  const valid = entries.filter((e) => isHistoryEntryCurrent(e, now));
+  await writeJson(historyKey(sub), valid.slice(0, HISTORY_LIMIT));
 };
 
 /** Records or updates the recipient email on a history entry. */
