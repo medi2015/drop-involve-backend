@@ -167,6 +167,9 @@ const describeType = (fileName = '') => {
 // No domain configuration is needed: Adobe web projects work on any host, and
 // any number of them. (Typekit required a domain allowlist; Adobe removed it.)
 const FONTS = `
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="preconnect" href="https://use.typekit.net" crossorigin>
 <link rel="preconnect" href="https://p.typekit.net" crossorigin>
 <link rel="stylesheet" href="https://use.typekit.net/lnt3nfg.css">`;
@@ -180,9 +183,9 @@ const CSS = `
     --sand: ${SAND};
     --brand: ${BRAND};
     --case: ${CASE_CARD};
-    --sans: "neue-haas-grotesk-text", "Helvetica Neue", Helvetica, Arial, sans-serif;
-    --display: "neue-haas-grotesk-display", "neue-haas-grotesk-text", "Helvetica Neue", Helvetica, Arial, sans-serif;
-    --mono: "andale-mono-mt-pro", "Andale Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: Inter, "neue-haas-grotesk-text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --display: Inter, "neue-haas-grotesk-display", "neue-haas-grotesk-text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --mono: "andale-mono-mt-pro", "JetBrains Mono", "Andale Mono", ui-monospace, Menlo, Consolas, monospace;
   }
 
   html, body { height: 100%; }
@@ -469,7 +472,7 @@ const CSS = `
     margin: -6px 0 0;
     font-family: var(--display);
     font-size: clamp(38px, 3.2vw, 46px);
-    font-weight: 400;
+    font-weight: 500;
     line-height: 1.12;
     letter-spacing: -0.015em;
     color: var(--tagline-color, ${INK});
@@ -543,7 +546,7 @@ const CSS = `
     min-height: 350px;
     font-family: var(--display);
     font-size: clamp(38px, 3.2vw, 46px);
-    font-weight: 400;
+    font-weight: 500;
     line-height: 1.12;
     letter-spacing: -0.015em;
     color: var(--tagline-color, ${INK});
